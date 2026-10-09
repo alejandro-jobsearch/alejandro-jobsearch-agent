@@ -8,11 +8,14 @@ class Prefilter:
     def __init__(self, cfg: dict):
         self.include = re.compile("|".join(cfg["title_include"]), re.I)
         self.exclude = re.compile("|".join(cfg["title_exclude"]), re.I)
+        self.domain = re.compile("|".join(cfg["title_domain"]), re.I) if cfg.get("title_domain") else None
         self.geo_keep = re.compile("|".join(cfg["geo_keep"]), re.I)
         self.geo_drop = re.compile("|".join(cfg["geo_drop"]), re.I) if cfg.get("geo_drop") else None
 
     def title_ok(self, j: Job) -> bool:
-        return bool(self.include.search(j.title)) and not self.exclude.search(j.title)
+        t = j.title
+        return (bool(self.include.search(t)) and not self.exclude.search(t)
+                and (self.domain is None or bool(self.domain.search(t))))
 
     def geo_ok(self, j: Job) -> bool:
         loc = j.location or ""

@@ -105,3 +105,9 @@ No se ejecuta su código. Solo se usa como referencia de diseño.
 - `llm-smoke` en verde. glm-5.3 es un **modelo de razonamiento**: la completion simple tarda 1.6 s y la respuesta en JSON (`response_format=json_object`) unos 15 s. Implicancia: antes de llamar al LLM hay que aplicar el prefiltro determinístico, y el scoring en lotes debe correr en paralelo (5–8 workers).
 - Labels del tracker creados en el repo privado.
 - Pendiente: tablero Project v2. Necesita el scope `project` en `gh` y un PAT clásico con `project` como secret para Actions.
+
+**2026-10-08 — Fase 1 (grafo de fuentes)**
+- `graph.py`: grafo LangGraph con `source_boards` y `source_jobspy` en paralelo, que confluyen en `prefilter` (título + dominio + geografía + dedupe).
+- Prueba local con 7 días, 23 términos × 2 ubicaciones: **4,820 avisos → 68** (todos de Perú), sin ningún 429 de LinkedIn, en 19 min. Con el filtro de dominio, 68 → ~50.
+- Google (vía JobSpy) no devuelve datos, así que se quitó. Los boards de las empresas de IA no publican en Perú: sus roles LATAM son presenciales en MX/BR. Quedan 8 boards con presencia LATAM verificada.
+- Pendiente fase 1b: amazon.jobs (AWS Lima) y Workday (consultoras/Big4).
