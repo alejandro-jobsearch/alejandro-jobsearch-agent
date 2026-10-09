@@ -1,6 +1,6 @@
 # Plan — Agente de búsqueda de empleo (LangGraph + GitHub Actions + GLM)
 
-Fecha: 2026-10-08 · Owner: Alejandro More
+Fecha: 2026-10-08 · Owner: Alejandro More · Org: [alejandro-jobsearch](https://github.com/alejandro-jobsearch)
 
 ## 1. Objetivo
 
