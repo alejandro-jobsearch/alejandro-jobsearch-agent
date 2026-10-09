@@ -1,0 +1,31 @@
+# Search config example. Copy to the private data repo as config/search.yml and adapt.
+
+jobspy:
+  sites: [linkedin, indeed, google]
+  hours_old: 24          # daily cron → last 24h only
+  per_term: 25
+  sleep: 4               # seconds between queries (LinkedIn rate-limits ~10 pages/IP)
+  locations:
+    - {name: "Lima, Peru", remote: false, country_indeed: peru}
+    - {name: "Latin America", remote: true, country_indeed: peru}
+  terms:
+    - Head of AI
+    - Enterprise Architect
+    - AI Architect
+    - Gerente de Tecnología
+
+# Public ATS boards (no auth). provider: greenhouse | lever | ashby
+boards:
+  - {provider: greenhouse, slug: anthropic, company: Anthropic}
+  - {provider: ashby, slug: openai, company: OpenAI}
+
+prefilter:
+  title_include:
+    - '\b(head|director|gerente|subgerente|jefe|manager|lead|principal|architect|arquitect)'
+  title_exclude:
+    - '\b(junior|jr\.?|trainee|intern|practicante|analista|analyst|developer|desarrollador|qa|support|soporte)\b'
+  geo_keep:
+    - 'peru|perú|lima'
+    - 'latam|latin america|south america|americas'
+  geo_drop:
+    - '.'   # anything else with a location is dropped; empty location is kept
