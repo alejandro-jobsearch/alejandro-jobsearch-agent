@@ -96,3 +96,12 @@ Regla dura: **las keywords se reformulan, nunca se inventan.** Si una brecha es 
 - `modes/` → ideas de prompts de evaluación
 
 No se ejecuta su código. Solo se usa como referencia de diseño.
+
+## 10. Bitácora
+
+**2026-10-08 — Fase 0 (parcial)**
+- Org `alejandro-jobsearch` con los 2 repos; local en `C:\Projects\alejandro-jobsearch\`.
+- El secret `MAAS_API_KEY` está en el **environment `poc`** del repo privado. Los jobs que lo usen declaran `environment: poc`, que en el workflow reutilizable se recibe como input.
+- `llm-smoke` en verde. glm-5.3 es un **modelo de razonamiento**: la completion simple tarda 1.6 s y la respuesta en JSON (`response_format=json_object`) unos 15 s. Implicancia: antes de llamar al LLM hay que aplicar el prefiltro determinístico, y el scoring en lotes debe correr en paralelo (5–8 workers).
+- Labels del tracker creados en el repo privado.
+- Pendiente: tablero Project v2. Necesita el scope `project` en `gh` y un PAT clásico con `project` como secret para Actions.
