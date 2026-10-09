@@ -5,6 +5,7 @@ Two tokens: `project_token` (PAT with repo + project; Actions' GITHUB_TOKEN cann
 and `issues_token` (Actions' GITHUB_TOKEN). Issues and digest comments are posted by the bot, because
 GitHub never notifies you about your own activity — posted with your PAT, the digest email never arrives.
 """
+import json
 import logging
 import re
 from datetime import date
@@ -109,7 +110,16 @@ class Tracker:
 </details>
 
 <!-- job-key: {j.key} -->
+<!-- jobagent-meta: {Tracker.meta(s)} -->
 """
+
+    @staticmethod
+    def meta(s: ScoredJob) -> str:
+        """Machine-readable payload for the local /postular step (keywords drive the ATS-after score)."""
+        llm = s.llm or {}
+        return json.dumps({"url": s.job.url, "company": s.job.company, "title": s.job.title, "lang": llm.get("lang"),
+                           "score": s.score, "ats_before": s.ats_before, "keywords": llm.get("keywords", []),
+                           "gaps": llm.get("gaps", [])}, ensure_ascii=False).replace("--", "—")
 
     def create(self, s: ScoredJob, watch: bool = False) -> str:
         r = self.issues.post(f"/repos/{self.repo}/issues", json={
@@ -124,6 +134,30 @@ class Tracker:
                              ("Fecha publicacion", s.job.date_posted)]:
             self._set(item, field, value)
         return issue["html_url"]
+
+    # --- used by the local /postular step --------------------------------------------------------
+    def issue(self, number: int) -> dict:
+        r = self.issues.get(f"/repos/{self.repo}/issues/{number}")
+        r.raise_for_status()
+        return r.json()
+
+    def item_for_issue(self, number: int) -> str | None:
+        d = self._gql("""query($o:String!,$r:String!,$n:Int!){ repository(owner:$o,name:$r){ issue(number:$n){
+                projectItems(first:10){ nodes{ id project{ id } } } } } }""",
+                      o=self.repo.split("/")[0], r=self.repo.split("/")[1], n=number)
+        for node in d["repository"]["issue"]["projectItems"]["nodes"]:
+            if node["project"]["id"] == self.project_id:
+                return node["id"]
+        return None
+
+    def set_fields(self, number: int, **values) -> None:
+        item = self.item_for_issue(number)
+        if item:
+            for field, value in values.items():
+                self._set(item, field.replace("_", " "), value)
+
+    def comment(self, number: int, body: str) -> None:
+        self.issues.post(f"/repos/{self.repo}/issues/{number}/comments", json={"body": body}).raise_for_status()
 
     def digest(self, lines: list[str], stats: dict) -> None:
         r = self.issues.get(f"/repos/{self.repo}/issues", params={"labels": "digest", "state": "open", "per_page": 1})

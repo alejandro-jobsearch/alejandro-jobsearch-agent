@@ -125,3 +125,9 @@ No se ejecuta su código. Solo se usa como referencia de diseño.
 - Prueba real: 4 Issues creados (Xertica 84, Periferia 80, INFORMÁTICA DELTA 78, Globant 73 watch) con sus campos en el tablero.
 - Cron diario 07:00 Lima en el repo privado: corrida completa con `track` + `write_state`. Sin `PROJECT_TOKEN`, no trackea ni guarda estado, para que no se pierdan vacantes.
 - Las vacantes con error de scoring no se guardan en `seen`, así se reintentan en la corrida siguiente.
+
+**2026-10-09 — Fase 5 (postular, local)**
+- `postular.py` tiene tres pasos: `fetch` (lee del Issue el bloque oculto `jobagent-meta` con keywords, idioma y brechas), `build` (copia el CV maestro y cambia solo el texto: titular, resumen, bullets por rol y líneas de skills; luego calcula el ATS después y cuenta páginas con Word COM) y `publish` (comenta en el Issue y pone la tarjeta en "CV listo" con ATS despues).
+- La redacción la hace Claude Code con el skill `postular` del repo privado: solo logros `verified`, reformular sin inventar, regla de certificaciones vencidas y presupuesto de 2 páginas.
+- Primer caso real, Xertica Data & AI Lead: **ATS 62% → 97%, 2 páginas**. Solo quedó fuera "AI-First", que es la metodología de la empresa y no se inventa. Se necesitaron 3 iteraciones para entrar en 2 páginas (titular en 1 línea y resumen ≤ 5 líneas).
+- Perfil extendido revisado con Alejandro: 45 logros verified; CV maestros corregidos (Scrum Fundamentals, EXIN Cloud Computing Foundation).
