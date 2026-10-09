@@ -29,3 +29,15 @@ class Job(BaseModel):
     def key(self) -> str:
         """Company + title, normalized: the same role seen on two boards collapses to one key."""
         return f"{_norm(self.company)}|{_norm(self.title)}"
+
+
+class ScoredJob(BaseModel):
+    job: Job
+    applied_match: str | None = None
+    company_history: list[str] = []     # other roles already applied at the same company
+    score: int | None = None            # weighted rubric, operator cap applied
+    band: str | None = None
+    ats_before: int | None = None       # keyword coverage of the base CV
+    ats_missing: list[str] = []
+    llm: dict | None = None             # raw LLMScore
+    error: str | None = None

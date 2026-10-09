@@ -1,33 +1,47 @@
 """LangGraph pipeline.
 
-Phase 1 (this file today):  START ─┬─ source_boards ─┬─ prefilter ─ END
-                                   └─ source_jobspy ─┘
-Later phases add nodes after `prefilter`: ats_before → llm_score → route → create_issue → digest.
+START ─┬─ source_boards ─┬─ prefilter ─ unseen ─ mark_applied ─┬─ score_one ×N (Send, parallel) ─┬─ remember ─ END
+       └─ source_jobspy ─┘                                     └──────── (no jobs) ──────────────┘
+
+Next phases add nodes after `remember`: route → create_issue → digest, and an interrupt for approval.
 """
 import logging
 import operator
 from collections import Counter
+from datetime import date
 from typing import Annotated, TypedDict
 
 from langgraph.graph import END, START, StateGraph
+from langgraph.types import Send
 
-from jobagent.models import Job
+from jobagent import ats, scoring
+from jobagent.models import Job, ScoredJob
 from jobagent.prefilter import Prefilter
 from jobagent.sources import boards, jobspy_src
+from jobagent.state import Context
 
 log = logging.getLogger("jobagent")
 
 
 class State(TypedDict, total=False):
     config: dict
-    skip: list[str]
-    raw: Annotated[list[Job], operator.add]      # parallel sources append here
+    ctx: Context
+    options: dict                                   # skip, limit, write_state, score
+    raw: Annotated[list[Job], operator.add]         # parallel sources append here
     jobs: list[Job]
-    stats: dict
+    candidates: list[ScoredJob]
+    scored: Annotated[list[ScoredJob], operator.add]
+    stats: Annotated[dict, operator.or_]
+
+
+class ScoreTask(TypedDict):
+    item: ScoredJob
+    config: dict
+    ctx: Context
 
 
 def source_boards(state: State) -> dict:
-    if "boards" in state.get("skip", []):
+    if "boards" in state["options"].get("skip", []):
         return {"raw": []}
     out = []
     for b in state["config"].get("boards", []):
@@ -42,7 +56,7 @@ def source_boards(state: State) -> dict:
 
 def source_jobspy(state: State) -> dict:
     js = state["config"].get("jobspy")
-    if not js or "jobspy" in state.get("skip", []):
+    if not js or "jobspy" in state["options"].get("skip", []):
         return {"raw": []}
     return {"raw": jobspy_src.search(js["terms"], js["locations"], js["sites"], js["hours_old"],
                                      js["per_term"], js.get("sleep", 4.0))}
@@ -61,18 +75,71 @@ def prefilter(state: State) -> dict:
         else:
             seen |= {j.key, j.url}
             kept.append(j)
-    stats = {"raw": len(state["raw"]), "kept": len(kept), "dropped": dict(why),
-             "by_source": dict(Counter(j.source for j in kept))}
-    return {"jobs": kept, "stats": stats}
+    return {"jobs": kept, "stats": {"raw": len(state["raw"]), "prefiltered": len(kept), "dropped": dict(why)}}
+
+
+def unseen(state: State) -> dict:
+    """Drop postings already processed in previous runs (state/seen.jsonl in the data repo)."""
+    new = [j for j in state["jobs"] if not state["ctx"].is_seen(j)]
+    if limit := state["options"].get("limit"):
+        new = new[:limit]
+    return {"jobs": new, "stats": {"new": len(new)}}
+
+
+def mark_applied(state: State) -> dict:
+    ctx = state["ctx"]
+    items = []
+    for j in state["jobs"]:
+        same, others = ctx.applied_match(j)
+        items.append(ScoredJob(job=j, applied_match=same, company_history=others))
+    return {"candidates": items, "stats": {"already_applied": sum(bool(i.applied_match) for i in items)}}
+
+
+def fan_out(state: State):
+    todo = [i for i in state["candidates"] if not i.applied_match] if state["options"].get("score", True) else []
+    done = [i for i in state["candidates"] if i not in todo]
+    sends = [Send("score_one", {"item": i, "config": state["config"], "ctx": state["ctx"]}) for i in todo]
+    sends.append(Send("passthrough", {"items": done}))
+    return sends
+
+
+def passthrough(task: dict) -> dict:
+    return {"scored": task["items"]}
+
+
+def score_one(task: ScoreTask) -> dict:
+    item, cfg, ctx = task["item"], task["config"]["scoring"], task["ctx"]
+    try:
+        s = scoring.score(item.job, ctx.criteria)
+    except Exception as e:
+        log.warning("score failed %s: %s", item.job.url, e)
+        return {"scored": [item.model_copy(update={"error": f"{type(e).__name__}: {e}"[:300]})]}
+    total = scoring.weighted(s.dims, cfg["weights"], s.requires_operator_leadership, cfg["operator_cap"])
+    cov, missing = ats.coverage([k.model_dump() for k in s.keywords], ctx.cv[s.lang])
+    return {"scored": [item.model_copy(update={"score": total, "band": scoring.band(total), "ats_before": cov,
+                                               "ats_missing": missing, "llm": s.model_dump()})]}
+
+
+def remember(state: State) -> dict:
+    if state["options"].get("write_state"):
+        state["ctx"].remember([i.job for i in state["scored"]], date.today().isoformat())
+    bands = Counter(i.band or ("applied" if i.applied_match else "error") for i in state["scored"])
+    return {"stats": {"bands": dict(bands)}}
 
 
 def build():
     g = StateGraph(State)
-    g.add_node("source_boards", source_boards)
-    g.add_node("source_jobspy", source_jobspy)
-    g.add_node("prefilter", prefilter)
+    for name, fn in [("source_boards", source_boards), ("source_jobspy", source_jobspy), ("prefilter", prefilter),
+                     ("unseen", unseen), ("mark_applied", mark_applied), ("score_one", score_one),
+                     ("passthrough", passthrough), ("remember", remember)]:
+        g.add_node(name, fn)
     g.add_edge(START, "source_boards")
     g.add_edge(START, "source_jobspy")
     g.add_edge(["source_boards", "source_jobspy"], "prefilter")
-    g.add_edge("prefilter", END)
+    g.add_edge("prefilter", "unseen")
+    g.add_edge("unseen", "mark_applied")
+    g.add_conditional_edges("mark_applied", fan_out, ["score_one", "passthrough"])
+    g.add_edge("score_one", "remember")
+    g.add_edge("passthrough", "remember")
+    g.add_edge("remember", END)
     return g.compile()
