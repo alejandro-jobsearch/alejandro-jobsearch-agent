@@ -119,3 +119,9 @@ No se ejecuta su código. Solo se usa como referencia de diseño.
 - ATS: el cruce por frase exacta daba 10–41%. Con keywords de 1–3 palabras y cruce por palabras (prefijo, sin stopwords) da 58–71% en roles afines y 30% en roles ajenos.
 - Opción `rescore_run_id` en el workflow para re-puntuar sin volver a buscar.
 - Volumen diario observado: ~5,000 avisos → ~13 tras prefiltro → ~10 nuevas.
+
+**2026-10-09 — Fase 4 (tracker + cron)**
+- Nodo `track` (`tracker.py`): un Issue por vacante con score ≥ 75, o ≥ 60 si la empresa está en `watch_companies` (label `watch`; el match es por palabra completa). Cada Issue entra al Project v2 con Status=Nueva, Score, ATS antes, Empresa, Lane y Fecha. Además, un comentario diario en el Issue "📬 Digest diario".
+- Prueba real: 4 Issues creados (Xertica 84, Periferia 80, INFORMÁTICA DELTA 78, Globant 73 watch) con sus campos en el tablero.
+- Cron diario 07:00 Lima en el repo privado: corrida completa con `track` + `write_state`. Sin `PROJECT_TOKEN`, no trackea ni guarda estado, para que no se pierdan vacantes.
+- Las vacantes con error de scoring no se guardan en `seen`, así se reintentan en la corrida siguiente.
