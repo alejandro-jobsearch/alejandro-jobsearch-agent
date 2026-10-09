@@ -1,7 +1,9 @@
 """GitHub tracker: one Issue per selected posting, added to an org Project v2 with its fields set,
 plus a daily digest comment on a pinned "Digest" issue.
 
-Needs a token with `repo` + `project` (Actions' GITHUB_TOKEN cannot write org Projects).
+Two tokens: `project_token` (PAT with repo + project; Actions' GITHUB_TOKEN cannot write org Projects)
+and `issues_token` (Actions' GITHUB_TOKEN). Issues and digest comments are posted by the bot, because
+GitHub never notifies you about your own activity — posted with your PAT, the digest email never arrives.
 """
 import logging
 import re
@@ -16,10 +18,12 @@ API = "https://api.github.com"
 
 
 class Tracker:
-    def __init__(self, token: str, repo: str, org: str, project_number: int):
+    def __init__(self, project_token: str, repo: str, org: str, project_number: int, issues_token: str | None = None):
         self.repo, self.org = repo, org
-        self.http = httpx.Client(base_url=API, timeout=30, headers={
-            "Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"})
+        mk = lambda tok: httpx.Client(base_url=API, timeout=30, headers={
+            "Authorization": f"Bearer {tok}", "Accept": "application/vnd.github+json"})
+        self.http = mk(project_token)                                  # GraphQL / Project v2
+        self.issues = mk(issues_token) if issues_token else self.http  # REST issues + comments
         self.project_id, self.fields = self._project(project_number)
 
     # --- GraphQL helpers -------------------------------------------------------------------------
@@ -108,7 +112,7 @@ class Tracker:
 """
 
     def create(self, s: ScoredJob, watch: bool = False) -> str:
-        r = self.http.post(f"/repos/{self.repo}/issues", json={
+        r = self.issues.post(f"/repos/{self.repo}/issues", json={
             "title": f"[{s.job.company}] {s.job.title}"[:250], "body": self.body(s), "labels": self.labels(s, watch)})
         r.raise_for_status()
         issue = r.json()
@@ -122,19 +126,22 @@ class Tracker:
         return issue["html_url"]
 
     def digest(self, lines: list[str], stats: dict) -> None:
-        r = self.http.get(f"/repos/{self.repo}/issues", params={"labels": "digest", "state": "open", "per_page": 1})
+        r = self.issues.get(f"/repos/{self.repo}/issues", params={"labels": "digest", "state": "open", "per_page": 1})
         r.raise_for_status()
         if r.json():
             number = r.json()[0]["number"]
         else:
-            r = self.http.post(f"/repos/{self.repo}/issues", json={
+            r = self.issues.post(f"/repos/{self.repo}/issues", json={
                 "title": "📬 Digest diario", "labels": ["digest"],
                 "body": "Un comentario por corrida con las vacantes nuevas. Suscríbete a este issue para recibirlo por correo."})
             r.raise_for_status()
             number = r.json()["number"]
+        bands = ", ".join(f"{k}: {v}" for k, v in (stats.get("bands") or {}).items()) or "–"
+        foot = (f"Avisos revisados: {stats.get('raw', '–')} · tras filtro: {stats.get('prefiltered', '–')} · "
+                f"nuevas puntuadas: {stats.get('new', '–')} · bandas: {bands}")
         text = f"### {date.today().isoformat()}\n\n" + ("\n".join(lines) if lines else "Sin vacantes nuevas sobre el umbral.") + \
-               f"\n\n<sub>{stats}</sub>"
-        self.http.post(f"/repos/{self.repo}/issues/{number}/comments", json={"body": text}).raise_for_status()
+               f"\n\n<sub>{foot}</sub>"
+        self.issues.post(f"/repos/{self.repo}/issues/{number}/comments", json={"body": text}).raise_for_status()
 
 
 def select(scored: list[ScoredJob], cfg: dict) -> list[tuple[ScoredJob, bool]]:

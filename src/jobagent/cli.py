@@ -55,12 +55,13 @@ def main() -> int:
     data = Path(a.data_dir)
     cfg = yaml.safe_load((data / "config" / "search.yml").read_text(encoding="utf-8"))
     token = os.environ.get("GH_PROJECT_TOKEN", "")
+    issues_token = os.environ.get("GH_ISSUES_TOKEN") or None   # Actions bot: makes notifications work
     if (a.track or a.track_only) and not (token and a.repo):
         p.error("--track needs GH_PROJECT_TOKEN and --repo (or GITHUB_REPOSITORY)")
     if a.track_only:
         scored = [ScoredJob(**json.loads(l)) for l in Path(a.track_only).read_text(encoding="utf-8").splitlines() if l]
         res = track({"config": cfg, "scored": scored, "stats": {"track_only": True},
-                     "options": {"track": True, "github_token": token, "repo": a.repo}})
+                     "options": {"track": True, "github_token": token, "issues_token": issues_token, "repo": a.repo}})
         print(res)
         return 0
     raw = []
@@ -69,7 +70,7 @@ def main() -> int:
         raw = [Job(**json.loads(l)) for l in Path(a.input).read_text(encoding="utf-8").splitlines() if l.strip()]
     state = {"config": cfg, "ctx": Context.load(data), "raw": raw, "scored": [], "stats": {},
              "options": {"skip": a.skip, "limit": a.limit, "score": a.score, "write_state": a.write_state,
-                         "track": a.track, "github_token": token, "repo": a.repo}}
+                         "track": a.track, "github_token": token, "issues_token": issues_token, "repo": a.repo}}
     result = build().invoke(state, {"max_concurrency": a.max_concurrency})
 
     out = Path(a.out)

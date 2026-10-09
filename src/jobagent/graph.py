@@ -128,7 +128,7 @@ def track(state: State) -> dict:
     from jobagent.tracker import Tracker, select
 
     cfg = state["config"]["tracker"]
-    t = Tracker(opts["github_token"], opts["repo"], cfg["org"], cfg["project_number"])
+    t = Tracker(opts["github_token"], opts["repo"], cfg["org"], cfg["project_number"], opts.get("issues_token"))
     picked = select(state["scored"], cfg)
     lines, created = [], 0
     for s, watch in picked:
