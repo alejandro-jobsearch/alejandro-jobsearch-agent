@@ -47,3 +47,13 @@ def test_prefilter_title_domain_geo():
     assert not pf(mk("Junior Architect"))                 # excluded
     assert not pf(mk("Head of AI", "Mexico City"))        # geography
     assert pf(mk("Head of AI", ""))                       # unknown location kept
+
+
+def test_tracker_select_threshold_and_watch_word_boundary():
+    from jobagent.models import ScoredJob
+    from jobagent.tracker import select
+
+    mk = lambda company, score: ScoredJob(job=Job(source="x", company=company, title="t", url=company), score=score)
+    cfg = {"min_score": 75, "watch_min": 60, "watch_companies": ["EY", "Globant"]}
+    picked = select([mk("Acme", 80), mk("Globant", 70), mk("Keystone", 70), mk("EY Peru", 65), mk("Foo", 50)], cfg)
+    assert [(s.job.company, w) for s, w in picked] == [("Acme", False), ("Globant", True), ("EY Peru", True)]

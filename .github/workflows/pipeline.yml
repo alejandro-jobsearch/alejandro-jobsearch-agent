@@ -32,6 +32,10 @@ on:
         description: reuse jobs.jsonl from a previous run's artifact (skips sourcing)
         type: string
         default: ""
+      track:
+        description: create Issues + Project items (needs PROJECT_TOKEN secret with repo+project)
+        type: boolean
+        default: false
 
 jobs:
   run:
@@ -68,11 +72,22 @@ jobs:
           MAAS_BASE_URL: ${{ inputs.maas_base_url }}
           MAAS_MODEL: ${{ inputs.maas_model }}
           MAAS_API_KEY: ${{ secrets.MAAS_API_KEY }}
+          GH_PROJECT_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
         run: |
           args=(--data-dir data --out out)
           [ "${{ inputs.limit }}" != "0" ] && args+=(--limit "${{ inputs.limit }}")
           [ -n "${{ inputs.skip }}" ] && args+=(--skip ${{ inputs.skip }})
-          [ "${{ inputs.write_state }}" = "true" ] && args+=(--write-state)
+          write_state="${{ inputs.write_state }}"
+          if [ "${{ inputs.track }}" = "true" ]; then
+            if [ -n "$GH_PROJECT_TOKEN" ]; then
+              args+=(--track)
+            else
+              echo "::warning::PROJECT_TOKEN missing: skipping tracking AND state, so postings are retried once it exists"
+              write_state=false
+            fi
+          fi
+          [ "$write_state" = "true" ] && args+=(--write-state)
           [ -n "${{ inputs.rescore_run_id }}" ] && args+=(--input previous/jobs.jsonl)
           python -m jobagent.cli "${args[@]}"
           cat out/report.md >> "$GITHUB_STEP_SUMMARY"

@@ -9,13 +9,14 @@
 import argparse
 import json
 import logging
+import os
 import sys
 from pathlib import Path
 
 import yaml
 
-from jobagent.graph import build
-from jobagent.models import Job
+from jobagent.graph import build, track
+from jobagent.models import Job, ScoredJob
 from jobagent.state import Context
 
 
@@ -44,18 +45,31 @@ def main() -> int:
     p.add_argument("--no-score", dest="score", action="store_false")
     p.add_argument("--write-state", action="store_true")
     p.add_argument("--max-concurrency", type=int, default=6)
+    p.add_argument("--track", action="store_true", help="create Issues/Project items (needs GH_PROJECT_TOKEN)")
+    p.add_argument("--repo", default=os.environ.get("GITHUB_REPOSITORY"), help="owner/name of the data repo")
+    p.add_argument("--track-only", metavar="SCORED_JSONL", help="skip the pipeline; only track a previous scored.jsonl")
     a = p.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     logging.getLogger("httpx").setLevel(logging.WARNING)
 
     data = Path(a.data_dir)
     cfg = yaml.safe_load((data / "config" / "search.yml").read_text(encoding="utf-8"))
+    token = os.environ.get("GH_PROJECT_TOKEN", "")
+    if (a.track or a.track_only) and not (token and a.repo):
+        p.error("--track needs GH_PROJECT_TOKEN and --repo (or GITHUB_REPOSITORY)")
+    if a.track_only:
+        scored = [ScoredJob(**json.loads(l)) for l in Path(a.track_only).read_text(encoding="utf-8").splitlines() if l]
+        res = track({"config": cfg, "scored": scored, "stats": {"track_only": True},
+                     "options": {"track": True, "github_token": token, "repo": a.repo}})
+        print(res)
+        return 0
     raw = []
     if a.input:
         a.skip = ["jobspy", "boards"]
         raw = [Job(**json.loads(l)) for l in Path(a.input).read_text(encoding="utf-8").splitlines() if l.strip()]
     state = {"config": cfg, "ctx": Context.load(data), "raw": raw, "scored": [], "stats": {},
-             "options": {"skip": a.skip, "limit": a.limit, "score": a.score, "write_state": a.write_state}}
+             "options": {"skip": a.skip, "limit": a.limit, "score": a.score, "write_state": a.write_state,
+                         "track": a.track, "github_token": token, "repo": a.repo}}
     result = build().invoke(state, {"max_concurrency": a.max_concurrency})
 
     out = Path(a.out)

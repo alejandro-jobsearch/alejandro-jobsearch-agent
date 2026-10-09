@@ -1,9 +1,9 @@
 """LangGraph pipeline.
 
-START ─┬─ source_boards ─┬─ prefilter ─ unseen ─ mark_applied ─┬─ score_one ×N (Send, parallel) ─┬─ remember ─ END
-       └─ source_jobspy ─┘                                     └──────── (no jobs) ──────────────┘
+START ─┬─ source_boards ─┬─ prefilter ─ unseen ─ mark_applied ─┬─ score_one ×N (Send, parallel) ─┬─ summarize ─ track ─ remember ─ END
+       └─ source_jobspy ─┘                                     └─ passthrough (already applied) ─┘
 
-Next phases add nodes after `remember`: route → create_issue → digest, and an interrupt for approval.
+`track` turns selected postings into GitHub Issues on the Project board; `remember` persists what was seen.
 """
 import logging
 import operator
@@ -120,9 +120,37 @@ def score_one(task: ScoreTask) -> dict:
                                                "ats_missing": missing, "llm": s.model_dump()})]}
 
 
+def track(state: State) -> dict:
+    """Create an Issue + Project item per selected posting and post the daily digest."""
+    opts = state["options"]
+    if not opts.get("track"):
+        return {}
+    from jobagent.tracker import Tracker, select
+
+    cfg = state["config"]["tracker"]
+    t = Tracker(opts["github_token"], opts["repo"], cfg["org"], cfg["project_number"])
+    picked = select(state["scored"], cfg)
+    lines, created = [], 0
+    for s, watch in picked:
+        try:
+            url = t.create(s, watch)
+            created += 1
+            lines.append(f"- **{s.score}** · ATS {s.ats_before}% · [{s.job.company} — {s.job.title}]({url})"
+                         + (" · 👀 watch" if watch else ""))
+        except Exception as e:
+            log.warning("issue failed for %s: %s", s.job.url, e)
+    t.digest(lines, {k: state["stats"].get(k) for k in ("raw", "prefiltered", "new", "bands")})
+    return {"stats": {"issues": created}}
+
+
 def remember(state: State) -> dict:
     if state["options"].get("write_state"):
-        state["ctx"].remember([i.job for i in state["scored"]], date.today().isoformat())
+        # errored postings are not remembered, so the next run retries them
+        state["ctx"].remember([i.job for i in state["scored"] if not i.error], date.today().isoformat())
+    return {}
+
+
+def summarize(state: State) -> dict:
     bands = Counter(i.band or ("applied" if i.applied_match else "error") for i in state["scored"])
     return {"stats": {"bands": dict(bands)}}
 
@@ -131,7 +159,8 @@ def build():
     g = StateGraph(State)
     for name, fn in [("source_boards", source_boards), ("source_jobspy", source_jobspy), ("prefilter", prefilter),
                      ("unseen", unseen), ("mark_applied", mark_applied), ("score_one", score_one),
-                     ("passthrough", passthrough), ("remember", remember)]:
+                     ("passthrough", passthrough), ("summarize", summarize), ("track", track),
+                     ("remember", remember)]:
         g.add_node(name, fn)
     g.add_edge(START, "source_boards")
     g.add_edge(START, "source_jobspy")
@@ -139,7 +168,9 @@ def build():
     g.add_edge("prefilter", "unseen")
     g.add_edge("unseen", "mark_applied")
     g.add_conditional_edges("mark_applied", fan_out, ["score_one", "passthrough"])
-    g.add_edge("score_one", "remember")
-    g.add_edge("passthrough", "remember")
+    g.add_edge("score_one", "summarize")
+    g.add_edge("passthrough", "summarize")
+    g.add_edge("summarize", "track")
+    g.add_edge("track", "remember")
     g.add_edge("remember", END)
     return g.compile()
