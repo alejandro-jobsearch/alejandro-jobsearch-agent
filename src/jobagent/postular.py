@@ -3,6 +3,7 @@
     python -m jobagent.postular fetch   --data-dir D --issue 1 --work work/1
     python -m jobagent.postular build   --data-dir D --work work/1 --plan work/1/plan.yml --out "CV.docx" [--pages]
     python -m jobagent.postular publish --data-dir D --issue 1 --work work/1
+    python -m jobagent.postular applied --data-dir D --issue 1 --work work/1     # after the human sends it
 
 The writing (which verified achievements to use and how to phrase them for this posting) is done by the
 operator — in practice Claude Code following the `postular` skill — into `plan.yml`:
@@ -177,16 +178,35 @@ def publish(data_dir: Path, issue: int, work: Path, deck: str | None) -> None:
     print(f"#{issue}: comentario publicado; tablero → CV listo, ATS despues={res['ats_after']}")
 
 
+def applied(data_dir: Path, issue: int, work: Path, when: str) -> None:
+    """After the human sends the application: history entry + board card to Postulada."""
+    job = json.loads((work / "job.json").read_text(encoding="utf-8"))
+    res_file = work / "result.json"
+    res = json.loads(res_file.read_text(encoding="utf-8")) if res_file.exists() else {}
+    ats_note = f"; CV {res['lang'].upper()} ATS {res['ats_before_issue']}→{res['ats_after']}" if res else ""
+    entry = {"company": job["company"], "role": job["title"],
+             "note": f"POSTULADO {when} vía pipeline (Issue #{issue}){ats_note}"}
+    path = data_dir / "config" / "applied.yml"
+    with path.open("a", encoding="utf-8") as f:
+        f.write(yaml.safe_dump([entry], allow_unicode=True, sort_keys=False, width=200))
+    t = _tracker(data_dir)
+    t.set_fields(issue, Status="Postulada")
+    t.comment(issue, f"📨 Postulada el {when}.")
+    print(f"#{issue}: applied.yml actualizado; tablero → Postulada")
+
+
 def main() -> int:
     sys.stdout.reconfigure(encoding="utf-8")
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="cmd", required=True)
-    for name in ("fetch", "build", "publish"):
+    for name in ("fetch", "build", "publish", "applied"):
         s = sub.add_parser(name)
         s.add_argument("--data-dir", required=True, type=Path)
         s.add_argument("--work", required=True, type=Path)
-        if name in ("fetch", "publish"):
+        if name in ("fetch", "publish", "applied"):
             s.add_argument("--issue", required=True, type=int)
+        if name == "applied":
+            s.add_argument("--date", default=__import__("datetime").date.today().isoformat())
         if name == "build":
             s.add_argument("--plan", required=True, type=Path)
             s.add_argument("--out", required=True, type=Path)
@@ -199,8 +219,10 @@ def main() -> int:
         fetch(a.data_dir, a.issue, a.work)
     elif a.cmd == "build":
         build(a.data_dir, a.work, a.plan, a.out, a.pages, a.master_dir)
-    else:
+    elif a.cmd == "publish":
         publish(a.data_dir, a.issue, a.work, a.deck)
+    else:
+        applied(a.data_dir, a.issue, a.work, a.date)
     return 0
 
 
