@@ -1,0 +1,22 @@
+# reference material (cloned, not versioned)
+reference/
+
+# personal data — never commit to this public repo
+data/
+cv/
+*.docx
+*.pdf
+config/*.yml
+!config/examples/*.yml
+state/
+
+# secrets / env
+.env
+.env.*
+!.env.example
+
+# python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
