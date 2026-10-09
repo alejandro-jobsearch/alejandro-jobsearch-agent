@@ -1,5 +1,7 @@
 # alejandro-jobsearch-agent
 
+[![ci](https://github.com/alejandro-jobsearch/alejandro-jobsearch-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/alejandro-jobsearch/alejandro-jobsearch-agent/actions/workflows/ci.yml)
+
 Agentic job-search pipeline built with **LangGraph**: sources openings from public job boards and ATS APIs, filters and scores them against a candidate profile (deterministic ATS keyword coverage + LLM rubric), and tracks them as GitHub Issues on a Project board. A human approves every application — nothing is auto-submitted.
 
 - **Runtime:** GitHub Actions (scheduled, reusable workflow)

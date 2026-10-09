@@ -50,8 +50,9 @@ Return ONLY a JSON object with exactly these keys:
 - "gaps": list of concrete requirements the candidate does not evidence (short phrases, max 6)
 - "summary": 2 sentences, in Spanish, on why it fits or not
 - "keywords": 8-20 ATS keywords from the posting: {{"term", "importance": "must"|"nice", "aliases": [synonyms or
-  translations a recruiter would accept, incl. English/Spanish variants]}}. Skills, tools, certifications,
-  methodologies, domain terms. No soft skills, no company name."""
+  translations a recruiter would accept, incl. English/Spanish variants]}}. Each term is 1-3 words, the way an
+  ATS parser would index it ("TOGAF", "data governance", "AWS", "arquitectura empresarial"), never a sentence.
+  Skills, tools, certifications, methodologies, domain terms. No soft skills, no job title, no company name."""
 
 
 def _user(j: Job) -> str:

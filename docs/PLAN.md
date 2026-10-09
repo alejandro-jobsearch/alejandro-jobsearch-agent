@@ -111,3 +111,11 @@ No se ejecuta su código. Solo se usa como referencia de diseño.
 - Prueba local con 7 días, 23 términos × 2 ubicaciones: **4,820 avisos → 68** (todos de Perú), sin ningún 429 de LinkedIn, en 19 min. Con el filtro de dominio, 68 → ~50.
 - Google (vía JobSpy) no devuelve datos, así que se quitó. Los boards de las empresas de IA no publican en Perú: sus roles LATAM son presenciales en MX/BR. Quedan 8 boards con presencia LATAM verificada.
 - Pendiente fase 1b: amazon.jobs (AWS Lima) y Workday (consultoras/Big4).
+
+**2026-10-08 — Fases 2–3 (memoria, historial, scoring)**
+- Nodos nuevos: `unseen` (state/seen.jsonl) → `mark_applied` (rapidfuzz contra applied.yml: mismo rol = no se puntúa; misma empresa = nota) → `score_one` ×N vía `Send` (en paralelo, `max_concurrency=6`) → `remember`.
+- Scoring con glm-5.3 sobre 9 vacantes reales de 24 h: el orden y las justificaciones son coherentes; la regla anti-falso-positivo se aplica.
+- glm-5.3 envuelve el JSON en ```` ```json ```` aun en modo `json_object`, así que se extrae el objeto antes de validar.
+- ATS: el cruce por frase exacta daba 10–41%. Con keywords de 1–3 palabras y cruce por palabras (prefijo, sin stopwords) da 58–71% en roles afines y 30% en roles ajenos.
+- Opción `rescore_run_id` en el workflow para re-puntuar sin volver a buscar.
+- Volumen diario observado: ~5,000 avisos → ~13 tras prefiltro → ~10 nuevas.
