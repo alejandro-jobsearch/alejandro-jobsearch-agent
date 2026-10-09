@@ -1,0 +1,33 @@
+name: llm-smoke
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        type: string
+        default: poc
+      maas_base_url:
+        type: string
+        required: true
+      maas_model:
+        type: string
+        required: true
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: alejandro-jobsearch/alejandro-jobsearch-agent
+          ref: main
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install .
+      - run: python -m jobagent.smoke
+        env:
+          MAAS_BASE_URL: ${{ inputs.maas_base_url }}
+          MAAS_MODEL: ${{ inputs.maas_model }}
+          MAAS_API_KEY: ${{ secrets.MAAS_API_KEY }}
