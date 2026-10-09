@@ -1,0 +1,79 @@
+name: pipeline
+
+# Reusable: runs in the CALLER's (private data repo) context, so logs, artifacts and state stay private.
+on:
+  workflow_call:
+    inputs:
+      environment:
+        type: string
+        default: poc
+      maas_base_url:
+        type: string
+        required: true
+      maas_model:
+        type: string
+        required: true
+      limit:
+        description: max new postings to score (0 = all)
+        type: number
+        default: 0
+      skip:
+        description: sources to skip, space separated (jobspy boards)
+        type: string
+        default: ""
+      write_state:
+        description: append processed postings to state/seen.jsonl and commit it
+        type: boolean
+        default: false
+      engine_ref:
+        type: string
+        default: main
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    timeout-minutes: 90
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: data
+      - uses: actions/checkout@v4
+        with:
+          repository: alejandro-jobsearch/alejandro-jobsearch-agent
+          ref: ${{ inputs.engine_ref }}
+          path: engine
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: engine/pyproject.toml
+      - run: pip install ./engine
+      - name: Run pipeline
+        env:
+          MAAS_BASE_URL: ${{ inputs.maas_base_url }}
+          MAAS_MODEL: ${{ inputs.maas_model }}
+          MAAS_API_KEY: ${{ secrets.MAAS_API_KEY }}
+        run: |
+          args=(--data-dir data --out out)
+          [ "${{ inputs.limit }}" != "0" ] && args+=(--limit "${{ inputs.limit }}")
+          [ -n "${{ inputs.skip }}" ] && args+=(--skip ${{ inputs.skip }})
+          [ "${{ inputs.write_state }}" = "true" ] && args+=(--write-state)
+          python -m jobagent.cli "${args[@]}"
+          cat out/report.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: run-${{ github.run_id }}
+          path: out/
+          retention-days: 30
+      - name: Commit state
+        if: inputs.write_state
+        working-directory: data
+        run: |
+          git config user.name "jobsearch-bot"
+          git config user.email "jobsearch-bot@users.noreply.github.com"
+          git add state/
+          git diff --cached --quiet || (git commit -m "state: run ${{ github.run_id }}" && git push)
