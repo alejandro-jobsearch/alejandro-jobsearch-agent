@@ -30,7 +30,7 @@ def report(scored, stats) -> str:
             note += f" · Misma empresa: {'; '.join(i.company_history)}"
         lines.append(f"| {i.score if i.score is not None else '–'} | {i.band or '–'} | "
                      f"{i.ats_before if i.ats_before is not None else '–'} | {llm.get('lane', '–')} | {i.job.company} | "
-                     f"[{i.job.title}]({i.job.url}) | {i.job.location} | {note.replace('|', '/')} |")
+                     f"[{i.job.title}]({i.job.url}) | {i.job.location} | {' '.join(note.replace('|', '/').split())[:400]} |")
     return "\n".join(lines) + "\n"
 
 

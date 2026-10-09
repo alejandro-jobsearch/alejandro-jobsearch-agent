@@ -60,6 +60,12 @@ def _user(j: Job) -> str:
                        "description": j.description[:12000]}, ensure_ascii=False)
 
 
+def _json_body(text: str) -> str:
+    """Some models wrap JSON in ```json fences even in json_object mode: keep the outermost {...}."""
+    start, end = text.find("{"), text.rfind("}")
+    return text[start:end + 1] if start != -1 and end > start else text
+
+
 def score(j: Job, criteria: str) -> LLMScore:
     msgs = [{"role": "system", "content": SYSTEM.format(criteria=criteria, dims=", ".join(DIMENSIONS))},
             {"role": "user", "content": _user(j)}]
@@ -68,7 +74,7 @@ def score(j: Job, criteria: str) -> LLMScore:
         r = client().chat.completions.create(model=model(), messages=msgs, max_tokens=6000,
                                              response_format={"type": "json_object"}, temperature=0.2)
         try:
-            return LLMScore.model_validate_json(r.choices[0].message.content)
+            return LLMScore.model_validate_json(_json_body(r.choices[0].message.content or ""))
         except ValidationError as e:
             last = e
             log.warning("invalid JSON for %s (attempt %d): %s", j.url, attempt + 1, e.errors()[:2])

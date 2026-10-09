@@ -28,6 +28,10 @@ on:
       engine_ref:
         type: string
         default: main
+      rescore_run_id:
+        description: reuse jobs.jsonl from a previous run's artifact (skips sourcing)
+        type: string
+        default: ""
 
 jobs:
   run:
@@ -36,6 +40,7 @@ jobs:
     timeout-minutes: 90
     permissions:
       contents: write
+      actions: read
     steps:
       - uses: actions/checkout@v4
         with:
@@ -51,6 +56,13 @@ jobs:
           cache: pip
           cache-dependency-path: engine/pyproject.toml
       - run: pip install ./engine
+      - uses: actions/download-artifact@v4
+        if: inputs.rescore_run_id != ''
+        with:
+          name: run-${{ inputs.rescore_run_id }}
+          run-id: ${{ inputs.rescore_run_id }}
+          github-token: ${{ github.token }}
+          path: previous
       - name: Run pipeline
         env:
           MAAS_BASE_URL: ${{ inputs.maas_base_url }}
@@ -61,6 +73,7 @@ jobs:
           [ "${{ inputs.limit }}" != "0" ] && args+=(--limit "${{ inputs.limit }}")
           [ -n "${{ inputs.skip }}" ] && args+=(--skip ${{ inputs.skip }})
           [ "${{ inputs.write_state }}" = "true" ] && args+=(--write-state)
+          [ -n "${{ inputs.rescore_run_id }}" ] && args+=(--input previous/jobs.jsonl)
           python -m jobagent.cli "${args[@]}"
           cat out/report.md >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
