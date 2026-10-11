@@ -28,6 +28,7 @@ class Tracker:
         self.http = mk(project_token)                                  # GraphQL / Project v2
         self.issues = mk(issues_token) if issues_token else self.http  # REST issues + comments
         self.project_id, self.fields = self._project(project_number)
+        self.project_url = f"https://github.com/orgs/{org}/projects/{project_number}"
 
     # --- GraphQL helpers -------------------------------------------------------------------------
     def _gql(self, query: str, **variables) -> dict:
@@ -213,7 +214,8 @@ class Tracker:
         else:
             r = self.issues.post(f"/repos/{self.repo}/issues", json={
                 "title": "📬 Digest diario", "labels": ["digest"],
-                "body": "Un comentario por corrida con las vacantes nuevas. Suscríbete a este issue para recibirlo por correo."})
+                "body": f"### 👉 [Abrir el tablero de postulaciones]({self.project_url})\n\n"
+                        "Un comentario por corrida con las vacantes nuevas. Suscríbete a este issue para recibirlo por correo."})
             r.raise_for_status()
             number = r.json()["number"]
         bands = ", ".join(f"{k}: {v}" for k, v in (stats.get("bands") or {}).items()) or "–"
