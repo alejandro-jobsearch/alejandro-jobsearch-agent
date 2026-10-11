@@ -27,5 +27,23 @@ prefilter:
   geo_keep:
     - 'peru|perú|lima'
     - 'latam|latin america|south america|americas'
+  job_type_exclude: [temporary, internship, parttime]   # JobSpy job_type
+  company_exclude:                                       # company-name blocklist (regex)
+    - 'some staffing firm'
   geo_drop:
     - '.'   # anything else with a location is dropped; empty location is kept
+
+# Optional: drop small/regional IT-services consultancies using the LinkedIn company page (size, industry, HQ).
+company_filter:
+  industries: 'IT Services|IT Consulting|Staffing|Outsourcing'
+  countries: [PE, CO, MX]       # HQ countries considered "local"
+  max_employees: 5000           # local consultancy at or below this size is dropped
+  tiny_employees: 200           # any consultancy at or below this size is dropped
+  sleep: 1
+
+tracker:
+  org: your-org
+  project_number: 1
+  min_score: 75
+  watch_min: 60
+  prune_statuses: [Nueva, Evaluada]   # daily: close + archive cards whose posting no longer accepts applications

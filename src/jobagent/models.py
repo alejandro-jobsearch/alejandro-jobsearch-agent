@@ -24,6 +24,8 @@ class Job(BaseModel):
     salary_max: float | None = None
     currency: str | None = None
     search_term: str | None = None
+    job_type: str | None = None          # fulltime | parttime | contract | temporary | internship (JobSpy)
+    company_url: str | None = None       # LinkedIn company page, used by the company filter
 
     @property
     def key(self) -> str:

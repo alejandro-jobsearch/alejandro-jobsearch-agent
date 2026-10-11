@@ -8,10 +8,12 @@ GitHub never notifies you about your own activity — posted with your PAT, the 
 import json
 import logging
 import re
+import time
 from datetime import date
 
 import httpx
 
+from jobagent import linkedin
 from jobagent.models import ScoredJob, _norm
 
 log = logging.getLogger(__name__)
@@ -159,7 +161,51 @@ class Tracker:
     def comment(self, number: int, body: str) -> None:
         self.issues.post(f"/repos/{self.repo}/issues/{number}/comments", json={"body": body}).raise_for_status()
 
-    def digest(self, lines: list[str], stats: dict) -> None:
+    # --- daily pruning of postings that stopped accepting applications ---------------------------
+    def items(self) -> list[dict]:
+        """Non-archived project items backed by an open issue: {item, status, number, title, url}."""
+        out, cursor = [], None
+        while True:
+            d = self._gql("""query($p:ID!,$c:String){ node(id:$p){ ... on ProjectV2{ items(first:100, after:$c){
+                    pageInfo{ hasNextPage endCursor }
+                    nodes{ id isArchived fieldValueByName(name:"Status"){ ... on ProjectV2ItemFieldSingleSelectValue{ name } }
+                           content{ ... on Issue{ number title body state } } } } } } }""", p=self.project_id, c=cursor)
+            page = d["node"]["items"]
+            for n in page["nodes"]:
+                c = n.get("content") or {}
+                if n["isArchived"] or c.get("state") != "OPEN":
+                    continue
+                if url := job_url(c.get("body") or ""):
+                    out.append({"item": n["id"], "status": (n.get("fieldValueByName") or {}).get("name"),
+                                "number": c["number"], "title": c["title"], "url": url})
+            if not page["pageInfo"]["hasNextPage"]:
+                return out
+            cursor = page["pageInfo"]["endCursor"]
+
+    def prune_closed(self, statuses: list[str], sleep: float = 1.0) -> list[str]:
+        """Close + archive cards (in `statuses`) whose posting no longer accepts applications. Returns their titles."""
+        pruned = []
+        for it in self.items():
+            if it["status"] not in statuses:
+                continue
+            closed = linkedin.is_closed(it["url"])
+            time.sleep(sleep)
+            if not closed:
+                continue
+            try:
+                self.comment(it["number"], "🔒 La convocatoria ya no acepta postulaciones: cerrada y archivada automáticamente.")
+                self.issues.patch(f"/repos/{self.repo}/issues/{it['number']}",
+                                  json={"state": "closed", "state_reason": "not_planned"}).raise_for_status()
+                self._set(it["item"], "Status", "Cerrada")
+                self._gql("""mutation($p:ID!,$i:ID!){ archiveProjectV2Item(input:{projectId:$p,itemId:$i}){ item{ id } } }""",
+                          p=self.project_id, i=it["item"])
+                pruned.append(it["title"])
+                log.info("pruned #%s %s", it["number"], it["title"])
+            except Exception as e:
+                log.warning("prune failed for #%s: %s", it["number"], e)
+        return pruned
+
+    def digest(self, lines: list[str], stats: dict, pruned: list[str] = ()) -> None:
         r = self.issues.get(f"/repos/{self.repo}/issues", params={"labels": "digest", "state": "open", "per_page": 1})
         r.raise_for_status()
         if r.json():
@@ -173,18 +219,31 @@ class Tracker:
         bands = ", ".join(f"{k}: {v}" for k, v in (stats.get("bands") or {}).items()) or "–"
         foot = (f"Avisos revisados: {stats.get('raw', '–')} · tras filtro: {stats.get('prefiltered', '–')} · "
                 f"nuevas puntuadas: {stats.get('new', '–')} · bandas: {bands}")
+        closed = f"\n\n🔒 Cerradas (ya no aceptan postulaciones): {'; '.join(pruned)}" if pruned else ""
         text = f"### {date.today().isoformat()}\n\n" + ("\n".join(lines) if lines else "Sin vacantes nuevas sobre el umbral.") + \
-               f"\n\n<sub>{foot}</sub>"
+               closed + f"\n\n<sub>{foot}</sub>"
         self.issues.post(f"/repos/{self.repo}/issues/{number}/comments", json={"body": text}).raise_for_status()
 
 
+def job_url(body: str) -> str | None:
+    """Posting URL from an issue body: the jobagent-meta block, else the first markdown link."""
+    if m := re.search(r"<!-- jobagent-meta: (\{.*?\}) -->", body):
+        try:
+            return json.loads(m.group(1)).get("url")
+        except json.JSONDecodeError:
+            pass
+    m = re.search(r"\]\((https?://[^)\s]+)\)", body)
+    return m.group(1) if m else None
+
+
 def select(scored: list[ScoredJob], cfg: dict) -> list[tuple[ScoredJob, bool]]:
-    """(item, is_watch) for postings that deserve an issue: score ≥ min_score, or a watched company ≥ watch_min."""
+    """(item, is_watch) for postings that deserve an issue: score ≥ min_score, or a watched company ≥ watch_min.
+    Postings the LLM flagged as temporary contracts never get an issue (criteria §7)."""
     names = [re.escape(_norm(w)) for w in cfg.get("watch_companies", [])]
     watch_re = re.compile(rf"\b({'|'.join(names)})\b") if names else None
     out = []
     for s in scored:
-        if s.applied_match or s.score is None:
+        if s.applied_match or s.score is None or (s.llm or {}).get("temporary"):
             continue
         if s.score >= cfg["min_score"]:
             out.append((s, False))

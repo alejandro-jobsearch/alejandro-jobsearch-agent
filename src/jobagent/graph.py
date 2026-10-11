@@ -1,12 +1,15 @@
 """LangGraph pipeline.
 
-START ─┬─ source_boards ─┬─ prefilter ─ unseen ─ mark_applied ─┬─ score_one ×N (Send, parallel) ─┬─ summarize ─ track ─ remember ─ END
-       └─ source_jobspy ─┘                                     └─ passthrough (already applied) ─┘
+START ─┬─ source_boards ─┬─ prefilter ─ unseen ─ company_check ─ mark_applied ─┬─ score_one ×N (Send) ─┬─ summarize ─ track ─ remember ─ END
+       └─ source_jobspy ─┘                                                   └─ passthrough ─────────┘
 
-`track` turns selected postings into GitHub Issues on the Project board; `remember` persists what was seen.
+`company_check` drops small/regional IT-services consultancies (LinkedIn company page). `track` prunes board
+cards whose posting no longer accepts applications, then turns selected postings into GitHub Issues;
+`remember` persists what was seen.
 """
 import logging
 import operator
+import time
 from collections import Counter
 from datetime import date
 from typing import Annotated, TypedDict
@@ -14,7 +17,7 @@ from typing import Annotated, TypedDict
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Send
 
-from jobagent import ats, scoring
+from jobagent import ats, linkedin, scoring
 from jobagent.models import Job, ScoredJob
 from jobagent.prefilter import Prefilter
 from jobagent.sources import boards, jobspy_src
@@ -68,6 +71,10 @@ def prefilter(state: State) -> dict:
     for j in state["raw"]:
         if not pf.title_ok(j):
             why["title"] += 1
+        elif not pf.type_ok(j):
+            why["job_type"] += 1
+        elif not pf.company_ok(j):
+            why["company"] += 1
         elif not pf.geo_ok(j):
             why["geo"] += 1
         elif j.key in seen or j.url in seen:
@@ -84,6 +91,26 @@ def unseen(state: State) -> dict:
     if limit := state["options"].get("limit"):
         new = new[:limit]
     return {"jobs": new, "stats": {"new": len(new)}}
+
+
+def company_check(state: State) -> dict:
+    """criteria §7: drop IT-services/staffing consultancies headquartered in LATAM below the size threshold."""
+    cfg = state["config"].get("company_filter")
+    if not cfg or "company_check" in state["options"].get("skip", []):
+        return {}
+    cache, kept, dropped = {}, [], []
+    for j in state["jobs"]:
+        if j.company_url and j.company_url not in cache:
+            cache[j.company_url] = linkedin.company(j.company_url)
+            time.sleep(cfg.get("sleep", 1.0))
+        info = cache.get(j.company_url) if j.company_url else None
+        if linkedin.local_consultancy(info, cfg):
+            dropped.append(f"{j.company} ({info['size']}, {info['country']})")
+        else:
+            kept.append(j)
+    if dropped:
+        log.info("company_check dropped: %s", "; ".join(sorted(set(dropped))))
+    return {"jobs": kept, "stats": {"consultancy_dropped": len(dropped)}}
 
 
 def mark_applied(state: State) -> dict:
@@ -129,6 +156,7 @@ def track(state: State) -> dict:
 
     cfg = state["config"]["tracker"]
     t = Tracker(opts["github_token"], opts["repo"], cfg["org"], cfg["project_number"], opts.get("issues_token"))
+    pruned = t.prune_closed(cfg.get("prune_statuses", ["Nueva", "Evaluada", "CV listo"]))
     picked = select(state["scored"], cfg)
     lines, created = [], 0
     for s, watch in picked:
@@ -139,8 +167,8 @@ def track(state: State) -> dict:
                          + (" · 👀 watch" if watch else ""))
         except Exception as e:
             log.warning("issue failed for %s: %s", s.job.url, e)
-    t.digest(lines, {k: state["stats"].get(k) for k in ("raw", "prefiltered", "new", "bands")})
-    return {"stats": {"issues": created}}
+    t.digest(lines, {k: state["stats"].get(k) for k in ("raw", "prefiltered", "new", "bands")}, pruned)
+    return {"stats": {"issues": created, "pruned": len(pruned)}}
 
 
 def remember(state: State) -> dict:
@@ -158,7 +186,7 @@ def summarize(state: State) -> dict:
 def build():
     g = StateGraph(State)
     for name, fn in [("source_boards", source_boards), ("source_jobspy", source_jobspy), ("prefilter", prefilter),
-                     ("unseen", unseen), ("mark_applied", mark_applied), ("score_one", score_one),
+                     ("unseen", unseen), ("company_check", company_check), ("mark_applied", mark_applied), ("score_one", score_one),
                      ("passthrough", passthrough), ("summarize", summarize), ("track", track),
                      ("remember", remember)]:
         g.add_node(name, fn)
@@ -166,7 +194,8 @@ def build():
     g.add_edge(START, "source_jobspy")
     g.add_edge(["source_boards", "source_jobspy"], "prefilter")
     g.add_edge("prefilter", "unseen")
-    g.add_edge("unseen", "mark_applied")
+    g.add_edge("unseen", "company_check")
+    g.add_edge("company_check", "mark_applied")
     g.add_conditional_edges("mark_applied", fan_out, ["score_one", "passthrough"])
     g.add_edge("score_one", "summarize")
     g.add_edge("passthrough", "summarize")

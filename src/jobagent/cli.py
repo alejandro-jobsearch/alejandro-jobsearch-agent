@@ -2,7 +2,7 @@
 
     python -m jobagent.cli --data-dir ../alejandro-jobsearch-data --out out
         [--skip jobspy boards] [--input out/jobs.jsonl] [--limit 10] [--no-score] [--write-state]
-        [--max-concurrency 6]
+        [--max-concurrency 6] [--track] [--prune-only]
 
 --input reuses a previous sourcing run (skips both sources) — handy to iterate on scoring.
 """
@@ -48,6 +48,7 @@ def main() -> int:
     p.add_argument("--track", action="store_true", help="create Issues/Project items (needs GH_PROJECT_TOKEN)")
     p.add_argument("--repo", default=os.environ.get("GITHUB_REPOSITORY"), help="owner/name of the data repo")
     p.add_argument("--track-only", metavar="SCORED_JSONL", help="skip the pipeline; only track a previous scored.jsonl")
+    p.add_argument("--prune-only", action="store_true", help="only close/archive cards whose posting is closed")
     a = p.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -56,8 +57,14 @@ def main() -> int:
     cfg = yaml.safe_load((data / "config" / "search.yml").read_text(encoding="utf-8"))
     token = os.environ.get("GH_PROJECT_TOKEN", "")
     issues_token = os.environ.get("GH_ISSUES_TOKEN") or None   # Actions bot: makes notifications work
-    if (a.track or a.track_only) and not (token and a.repo):
+    if (a.track or a.track_only or a.prune_only) and not (token and a.repo):
         p.error("--track needs GH_PROJECT_TOKEN and --repo (or GITHUB_REPOSITORY)")
+    if a.prune_only:
+        from jobagent.tracker import Tracker
+        tc = cfg["tracker"]
+        t = Tracker(token, a.repo, tc["org"], tc["project_number"], issues_token)
+        print({"pruned": t.prune_closed(tc.get("prune_statuses", ["Nueva", "Evaluada", "CV listo"]))})
+        return 0
     if a.track_only:
         scored = [ScoredJob(**json.loads(l)) for l in Path(a.track_only).read_text(encoding="utf-8").splitlines() if l]
         res = track({"config": cfg, "scored": scored, "stats": {"track_only": True},

@@ -29,6 +29,7 @@ class LLMScore(BaseModel):
     gaps: list[str]
     summary: str
     keywords: list[Keyword]
+    temporary: bool = False             # fixed-term / replacement / project contract (criteria §7)
 
 
 SYSTEM = """You are a strict recruiter-side evaluator. Score ONE job posting for ONE candidate using the
@@ -46,6 +47,8 @@ Return ONLY a JSON object with exactly these keys:
 - "lane": "A" | "B" | "C" | "none" (lanes from the criteria)
 - "lang": language the posting is written in, "en" or "es"
 - "english_work": "yes" | "no" | "unspecified" (English as day-to-day working language)
+- "temporary": true if the job is temporary or fixed-term (e.g. "temporal", "por X meses", "reemplazo",
+  "suplencia", "licencia", "por proyecto", interim/contract-to-end); false for permanent or not stated
 - "seniority_real": one short phrase with the REAL level after reading the duties (not the title)
 - "gaps": list of concrete requirements the candidate does not evidence (short phrases, max 6)
 - "summary": 2 sentences, in Spanish, on why it fits or not
