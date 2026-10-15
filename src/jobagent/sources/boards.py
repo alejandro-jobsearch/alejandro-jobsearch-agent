@@ -1,4 +1,4 @@
-"""Public ATS job-board APIs (no auth): Greenhouse, Lever, Ashby."""
+"""Public ATS job-board APIs (no auth): Greenhouse, Lever, Ashby, HireHive."""
 import html
 import re
 from datetime import date, datetime, timezone
@@ -63,4 +63,21 @@ def ashby(slug: str, company: str) -> list[Job]:
     return out
 
 
-PROVIDERS = {"greenhouse": greenhouse, "lever": lever, "ashby": ashby}
+def hirehive(slug: str, company: str) -> list[Job]:
+    url, out = f"https://{slug}.hirehive.com/api/v1/jobs", []
+    while url:  # 30 per page, `nextPage` is the absolute URL of the next one
+        r = httpx.get(url, timeout=TIMEOUT)
+        r.raise_for_status()
+        d = r.json()
+        for j in d["jobs"]:
+            country = (j.get("country") or {}).get("name", "")
+            ts = j.get("publishedDate")  # epoch seconds (Lever's are millis)
+            out.append(Job(source="hirehive", company=company, title=j["title"],
+                           location=", ".join(filter(None, [j.get("location"), country])), url=j["hostedUrl"],
+                           description=_text((j.get("description") or {}).get("html", "")),
+                           date_posted=datetime.fromtimestamp(int(ts), tz=timezone.utc).date() if ts else None))
+        url = d.get("nextPage")
+    return out
+
+
+PROVIDERS = {"greenhouse": greenhouse, "lever": lever, "ashby": ashby, "hirehive": hirehive}

@@ -105,3 +105,27 @@ def test_select_skips_temporary():
 
     s = ScoredJob(job=Job(source="x", company="Acme", title="t", url="u"), score=90, llm={"temporary": True})
     assert select([s], {"min_score": 75, "watch_min": 60}) == []
+
+
+def test_hirehive_pages_and_parses(monkeypatch):
+    from jobagent.sources import boards
+
+    pages = {
+        "https://acme.hirehive.com/api/v1/jobs": {"jobs": [{
+            "title": "Arquitecto de Tecnología", "location": "Lima", "country": {"name": "Peru"},
+            "description": {"html": "<p>Azure</p><li>APIs</li>"}, "publishedDate": "1789765753",
+            "hostedUrl": "https://acme.hirehive.com/a"}], "nextPage": "https://acme.hirehive.com/api/v1/jobs?skip=1"},
+        "https://acme.hirehive.com/api/v1/jobs?skip=1": {"jobs": [{
+            "title": "CTO", "location": None, "country": None, "description": None, "publishedDate": None,
+            "hostedUrl": "https://acme.hirehive.com/b"}], "nextPage": None},
+    }
+
+    class R:
+        def __init__(self, d): self.d = d
+        def raise_for_status(self): pass
+        def json(self): return self.d
+
+    monkeypatch.setattr(boards.httpx, "get", lambda url, **kw: R(pages[url]))
+    a, b = boards.hirehive("acme", "Acme")
+    assert (a.location, a.description, str(a.date_posted)) == ("Lima, Peru", "Azure\n- APIs", "2026-09-18")
+    assert (b.title, b.location, b.date_posted) == ("CTO", "", None)

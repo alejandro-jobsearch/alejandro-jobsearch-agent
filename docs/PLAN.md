@@ -131,3 +131,6 @@ No se ejecuta su código. Solo se usa como referencia de diseño.
 - La redacción la hace Claude Code con el skill `postular` del repo privado: solo logros `verified`, reformular sin inventar, regla de certificaciones vencidas y presupuesto de 2 páginas.
 - Primer caso real, Xertica Data & AI Lead: **ATS 62% → 97%, 2 páginas**. Solo quedó fuera "AI-First", que es la metodología de la empresa y no se inventa. Se necesitaron 3 iteraciones para entrar en 2 páginas (titular en 1 línea y resumen ≤ 5 líneas).
 - Perfil extendido revisado con Alejandro: 45 logros verified; CV maestros corregidos (Scrum Fundamentals, EXIN Cloud Computing Foundation).
+
+**2026-10-14 — Fuente HireHive**
+- Nuevo proveedor `hirehive` en `sources/boards.py` (API pública `https://<slug>.hirehive.com/api/v1/jobs`, paginada de a 30 por `nextPage`). Motivo: una vacante de arquitectura en un banco de inversión local estaba solo en su HireHive y JobSpy no la encontró (publicada antes de que existiera el cron y con un título fuera de los términos de búsqueda).
