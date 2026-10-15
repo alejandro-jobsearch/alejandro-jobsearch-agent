@@ -106,4 +106,4 @@ jobs:
           git config user.name "jobsearch-bot"
           git config user.email "jobsearch-bot@users.noreply.github.com"
           git add state/
-          git diff --cached --quiet || (git commit -m "state: run ${{ github.run_id }}" && git push)
+          git diff --cached --quiet || (git commit -m "state: run ${{ github.run_id }}" && git pull --rebase && git push)
