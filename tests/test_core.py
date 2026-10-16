@@ -107,6 +107,32 @@ def test_select_skips_temporary():
     assert select([s], {"min_score": 75, "watch_min": 60}) == []
 
 
+def test_select_skips_hard_exclusion_even_for_watched_company():
+    from jobagent.models import ScoredJob
+    from jobagent.tracker import select
+
+    cfg = {"min_score": 75, "watch_min": 60, "watch_companies": ["Indra"]}
+    excl = ScoredJob(job=Job(source="x", company="Indra", title="t", url="u"), score=64,
+                     llm={"hard_exclusion": True, "exclusion_reason": "rol centrado en Azure"})
+    high = ScoredJob(job=Job(source="x", company="Acme", title="t", url="u2"), score=90,
+                     llm={"hard_exclusion": True})
+    ok = ScoredJob(job=Job(source="x", company="Indra", title="t", url="u3"), score=64,
+                   llm={"hard_exclusion": False})
+    assert select([excl, high, ok], cfg) == [(ok, True)]
+
+
+def test_llmscore_hard_exclusion_defaults():
+    from jobagent.scoring import SYSTEM, LLMScore
+
+    base = {"dims": {}, "requires_operator_leadership": False, "lane": "none", "lang": "es",
+            "english_work": "unspecified", "seniority_real": "x", "gaps": [], "summary": "s", "keywords": []}
+    m = LLMScore.model_validate(base)
+    assert m.hard_exclusion is False and m.exclusion_reason == ""
+    m = LLMScore.model_validate({**base, "hard_exclusion": True, "exclusion_reason": "cert vencida"})
+    assert m.hard_exclusion and m.exclusion_reason == "cert vencida"
+    assert '"hard_exclusion"' in SYSTEM and '"exclusion_reason"' in SYSTEM
+
+
 def test_hirehive_pages_and_parses(monkeypatch):
     from jobagent.sources import boards
 

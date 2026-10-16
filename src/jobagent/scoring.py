@@ -30,6 +30,8 @@ class LLMScore(BaseModel):
     summary: str
     keywords: list[Keyword]
     temporary: bool = False             # fixed-term / replacement / project contract (criteria §7)
+    hard_exclusion: bool = False        # any other hard exclusion from criteria §7 applies
+    exclusion_reason: str = ""
 
 
 SYSTEM = """You are a strict recruiter-side evaluator. Score ONE job posting for ONE candidate using the
@@ -49,6 +51,10 @@ Return ONLY a JSON object with exactly these keys:
 - "english_work": "yes" | "no" | "unspecified" (English as day-to-day working language)
 - "temporary": true if the job is temporary or fixed-term (e.g. "temporal", "por X meses", "reemplazo",
   "suplencia", "licencia", "por proyecto", interim/contract-to-end); false for permanent or not stated
+- "hard_exclusion": true if ANY hard exclusion listed in the criteria applies (e.g. a mandatory certification
+  the candidate does not hold as current, a role centered on a technology or specialty the criteria exclude).
+  Set it whenever your summary would conclude the posting must be discarded, regardless of the numeric scores
+- "exclusion_reason": one short phrase naming the exclusion that applies, or "" when hard_exclusion is false
 - "seniority_real": one short phrase with the REAL level after reading the duties (not the title)
 - "gaps": list of concrete requirements the candidate does not evidence (short phrases, max 6)
 - "summary": 2 sentences, in Spanish, on why it fits or not

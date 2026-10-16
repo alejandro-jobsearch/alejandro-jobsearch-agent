@@ -240,12 +240,13 @@ def job_url(body: str) -> str | None:
 
 def select(scored: list[ScoredJob], cfg: dict) -> list[tuple[ScoredJob, bool]]:
     """(item, is_watch) for postings that deserve an issue: score ≥ min_score, or a watched company ≥ watch_min.
-    Postings the LLM flagged as temporary contracts never get an issue (criteria §7)."""
+    Postings the LLM flagged as temporary contracts or hard exclusions never get an issue (criteria §7)."""
     names = [re.escape(_norm(w)) for w in cfg.get("watch_companies", [])]
     watch_re = re.compile(rf"\b({'|'.join(names)})\b") if names else None
     out = []
     for s in scored:
-        if s.applied_match or s.score is None or (s.llm or {}).get("temporary"):
+        llm = s.llm or {}
+        if s.applied_match or s.score is None or llm.get("temporary") or llm.get("hard_exclusion"):
             continue
         if s.score >= cfg["min_score"]:
             out.append((s, False))
