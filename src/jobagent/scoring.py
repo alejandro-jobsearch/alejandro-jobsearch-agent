@@ -22,6 +22,7 @@ class Keyword(BaseModel):
 class LLMScore(BaseModel):
     dims: dict[str, int] = Field(description="0-100 per dimension")
     requires_operator_leadership: bool
+    internal_bank_role: bool = False    # owns a domain's technology INSIDE a bank/insurer (criteria §8)
     lane: Literal["A", "B", "C", "none"]
     lang: Literal["en", "es"]
     english_work: Literal["yes", "no", "unspecified"]
@@ -46,6 +47,12 @@ Return ONLY a JSON object with exactly these keys:
   (seniority = level fit; domain = AI/cloud/architecture/governance fit; industry; operator_vendor = apply the
   anti-false-positive rule; geo = location/modality fit; compensation = 100 if >= floor or not published, 0 if below)
 - "requires_operator_leadership": true if the posting requires having LED technology INSIDE a financial institution
+- "internal_bank_role": true if the employer is a bank, insurer, caja or financial group (or a headhunter/staffing
+  firm placing someone embedded in one) AND the role owns technology from the inside: a business domain's tech
+  roadmap, demand or portfolio, squads/tribes/chapters, or the bank's own platforms (e.g. Business Technology Lead,
+  IT Team Leader, Product Owner/Tribe Lead, domain or technology architect, Subgerente/Jefe de TI). Vendor-side
+  experience serving banks does not make a candidate competitive for these. false for roles at vendors,
+  consultancies, hyperscalers or fintech product companies
 - "lane": "A" | "B" | "C" | "none" (lanes from the criteria)
 - "lang": language the posting is written in, "en" or "es"
 - "english_work": "yes" | "no" | "unspecified" (English as day-to-day working language)

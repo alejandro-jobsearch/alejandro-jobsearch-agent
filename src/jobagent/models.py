@@ -37,6 +37,7 @@ class ScoredJob(BaseModel):
     job: Job
     applied_match: str | None = None
     company_history: list[str] = []     # other roles already applied at the same company
+    paused: str | None = None           # company paused after failed cold applications (why), not scored
     score: int | None = None            # weighted rubric, operator cap applied
     band: str | None = None
     ats_before: int | None = None       # keyword coverage of the base CV

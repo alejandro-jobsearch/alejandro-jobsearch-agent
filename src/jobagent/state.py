@@ -1,5 +1,6 @@
 """Data-repo context: CVs, criteria, application history and the persistent `seen` set."""
 import json
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -7,6 +8,8 @@ import yaml
 from rapidfuzz import fuzz
 
 from jobagent.models import Job, _norm
+
+FAILED = re.compile(r"RECHAZAD|REJECTED|SIN RESPUESTA|NO AVANZ", re.I)
 
 
 @dataclass
@@ -53,6 +56,17 @@ class Context:
             else:
                 others.append(label)
         return same, others
+
+    def paused(self, j: Job, after: int, referrals: list[str]) -> str | None:
+        """Why the company is paused: `after` or more past applications there closed with no answer or a
+        rejection, and no referral listed for it. None when it is open. Company names must match closely
+        (sort ratio, not set ratio): "Acme Capital" is not the "Acme" group."""
+        company = _norm(j.company)
+        if any(fuzz.token_sort_ratio(company, _norm(r)) >= 90 for r in referrals):
+            return None
+        failed = [a["role"] for a in self.applied
+                  if fuzz.token_sort_ratio(company, _norm(a["company"])) >= 90 and FAILED.search(a.get("note") or "")]
+        return f"{len(failed)} postulaciones sin éxito ({'; '.join(failed)}): solo con referido"             if len(failed) >= after else None
 
     def remember(self, jobs: list[Job], today: str) -> None:
         f = self.data_dir / "state" / "seen.jsonl"

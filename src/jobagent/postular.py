@@ -18,7 +18,9 @@ operator — in practice Claude Code following the `postular` skill — into `pl
     sources: {"Cloud Solutions Architect": ["csa-ai-arch", ...]}   # achievement ids backing each role (audit)
 
 `build` copies the master CV, swaps only text (formatting, styles and layout are kept), then scores ATS
-coverage against the posting's keywords and checks the page count with Word when available.
+coverage against the posting's keywords, runs `cvcheck` (unbacked claims, expired certifications, the posting's
+title as headline, sentences copied from the posting) and checks the page count with Word when available.
+`publish` refuses a CV whose check has errors.
 """
 import argparse
 import copy
@@ -32,7 +34,7 @@ from pathlib import Path
 import docx
 import yaml
 
-from jobagent import ats
+from jobagent import ats, cvcheck
 
 SUMMARY_HEADINGS = {"PROFESSIONAL SUMMARY", "RESUMEN PROFESIONAL", "PERFIL PROFESIONAL"}
 SECTION_HEADINGS = {"EDUCATION", "EDUCACIÓN", "FORMACIÓN ACADÉMICA", "SKILLS & CERTIFICATIONS",
@@ -147,23 +149,33 @@ def build(data_dir: Path, work: Path, plan_path: Path, out: Path, pages: bool, m
     lang = plan.get("lang") or job["lang"] or "en"
     master = next(master_dir.glob(f"CV - * - {lang.upper()} 20??.docx"))
     apply_plan(master, plan, out)
-    after, missing = ats.coverage(job["keywords"], docx_text(out))
+    text = docx_text(out)
+    after, missing = ats.coverage(job["keywords"], text)
     base, _ = ats.coverage(job["keywords"], docx_text(master))
+    profile = data_dir / "profile"
+    chk = cvcheck.check(plan, text, job,
+                        yaml.safe_load((profile / "experience.yml").read_text(encoding="utf-8")),
+                        yaml.safe_load((profile / "credentials.yml").read_text(encoding="utf-8"))["certifications"])
     result = {"cv": str(out), "master": master.name, "lang": lang, "ats_master": base, "ats_after": after,
               "ats_before_issue": job["ats_before"], "missing": missing,
-              "pages": page_count(out) if pages else None, "sources": plan.get("sources", {})}
+              "pages": page_count(out) if pages else None, "check": chk, "sources": plan.get("sources", {})}
     (work / "result.json").write_text(json.dumps(result, ensure_ascii=False, indent=1), encoding="utf-8")
-    print(json.dumps({k: v for k, v in result.items() if k != "sources"}, ensure_ascii=False))
+    print(json.dumps({k: v for k, v in result.items() if k not in ("sources", "check")}, ensure_ascii=False))
+    print(f"espejo: {chk['mirror']}% total, {chk['mirror_top']}% arriba")
+    for e in chk["errors"]:
+        print(f"ERROR: {e}")
     return result
 
 
 def publish(data_dir: Path, issue: int, work: Path, deck: str | None) -> None:
     res = json.loads((work / "result.json").read_text(encoding="utf-8"))
+    if errors := (res.get("check") or {}).get("errors"):
+        sys.exit("el CV no pasa el chequeo; corrige el plan y vuelve a correr build:\n- " + "\n- ".join(errors))
     t = _tracker(data_dir)
     missing = ", ".join(res["missing"]) or "(ninguna)"
     srcs = "\n".join(f"- {role}: {', '.join(ids)}" for role, ids in res["sources"].items()) or "- (no registrado)"
     body = f"""### ✅ CV listo
-**ATS:** {res['ats_before_issue']}% → **{res['ats_after']}%** · páginas: {res['pages'] or '?'} · idioma: {res['lang']}
+**ATS:** {res['ats_before_issue']}% → **{res['ats_after']}%** · espejo {res.get('check', {}).get('mirror', '?')}% · páginas: {res['pages'] or '?'} · idioma: {res['lang']}
 **Archivo:** `{Path(res['cv']).name}`
 {f"**Deck de preparación:** `{deck}`" if deck else ""}
 

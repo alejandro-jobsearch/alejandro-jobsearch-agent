@@ -155,3 +155,66 @@ def test_hirehive_pages_and_parses(monkeypatch):
     a, b = boards.hirehive("acme", "Acme")
     assert (a.location, a.description, str(a.date_posted)) == ("Lima, Peru", "Azure\n- APIs", "2026-09-18")
     assert (b.title, b.location, b.date_posted) == ("CTO", "", None)
+
+
+def test_ats_mirror_finds_copied_runs():
+    jd = "Liderar la gestión y priorización de la demanda tecnológica según valor, capacidad y recursos disponibles."
+    cv = "Priorizo la demanda tecnológica según valor, capacidad y recursos disponibles para clientes telco."
+    pct, runs = ats.mirror(cv, jd)
+    assert runs == ["la demanda tecnologica segun valor capacidad y recursos disponibles"]
+    assert pct == round(100 * 9 / 13)
+    assert ats.mirror("Defined cloud reference architectures.", jd)[0] == 0
+
+
+def test_cvcheck_blocks_mirrored_cv():
+    from jobagent import cvcheck
+
+    experience = {
+        "forbidden_claims": [{"pattern": r"\b(1[0-9]|[6-9]) (anos|years)\b[^.\d]{0,80}financ", "why": "~5.5 años"}],
+        "roles": [{"title": {"en": "Cloud Solutions Architect", "es": "Arquitecto de Soluciones Cloud"},
+                   "forbid": [{"pattern": r"\b(banca|seguros)\b", "why": "solo telco"}]}],
+    }
+    creds = [{"name": "Scrum Master Certified (SMC)", "status": "expired", "expires": "2024-01-05",
+              "cv_aliases": ["Scrum Master"]},
+             {"name": "AWS Certified Cloud Practitioner", "status": "expired", "expires": "2024-10-25"}]
+    plan = {"headline": "Digital Domain Lead | Estrategia Tecnológica",
+            "summary": "11 años liderando iniciativas en entornos financieros.",
+            "roles": {"Arquitecto de Soluciones Cloud": ["Portafolio con foco en banca y seguros."]}}
+    text = "\n".join([plan["headline"], plan["summary"], *plan["roles"]["Arquitecto de Soluciones Cloud"],
+                      "Certificaciones: Scrum Master, AWS Certified Cloud Practitioner (2021–2024)."])
+    errors = cvcheck.check(plan, text, {"title": "Digital Domain Lead", "description": ""},
+                           experience, creds)["errors"]
+    assert len(errors) == 4
+    assert [e.split(":")[0] for e in errors] == ["titular usa el cargo de la vacante («Digital Domain Lead») como si fuera propio",
+                                                 "certificación vencida sin años", "CV", "Arquitecto de Soluciones Cloud"]
+
+
+def test_cvcheck_headline_allows_held_title():
+    from jobagent import cvcheck
+
+    assert cvcheck.headline("Arquitecto de Soluciones Cloud | IA", "Arquitecto de Soluciones Cloud",
+                            ["Arquitecto de Soluciones Cloud"]) == []
+    assert cvcheck.headline("Enterprise AI & Cloud Architecture Leader", "Digital Domain Lead", []) == []
+
+
+def test_company_pause_needs_two_failures_and_respects_referrals(tmp_path):
+    from jobagent.state import Context
+
+    ctx = Context(data_dir=tmp_path, criteria="", cv={}, applied=[
+        {"company": "Acme Bank", "role": "A", "note": "SIN RESPUESTA — cerrada"},
+        {"company": "Acme Bank", "role": "B", "note": "RECHAZADA 2026-10-26"},
+        {"company": "Globex Capital", "role": "C", "note": "RECHAZADA"},
+        {"company": "Globex Capital", "role": "D", "note": "POSTULADO"},
+    ])
+    mk = lambda c: Job(source="x", company=c, title="t", url=c)
+    assert "solo con referido" in ctx.paused(mk("Acme Bank"), 2, [])
+    assert ctx.paused(mk("Acme Bank"), 2, ["Acme Bank"]) is None
+    assert ctx.paused(mk("Globex Capital"), 2, []) is None
+    assert ctx.paused(mk("Globex"), 1, []) is None          # group name is not the subsidiary
+
+
+def test_llmscore_internal_bank_role_defaults_false():
+    s = scoring.LLMScore.model_validate({"dims": {}, "requires_operator_leadership": False, "lane": "none",
+                                         "lang": "es", "english_work": "no", "seniority_real": "", "gaps": [],
+                                         "summary": "", "keywords": []})
+    assert s.internal_bank_role is False

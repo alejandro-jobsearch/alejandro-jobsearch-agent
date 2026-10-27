@@ -79,6 +79,8 @@ class Tracker:
         out.append(f"src:{s.job.source}")
         if watch:
             out.append("watch")
+        if llm.get("internal_bank_role"):
+            out.append("solo-referido")
         return out
 
     @staticmethod
@@ -100,6 +102,7 @@ class Tracker:
 |---|---|
 {rows}
 {"| ⚠️ requiere liderazgo operator-side | tope aplicado |" if llm.get("requires_operator_leadership") else ""}
+{"| ⚠️ rol interno de banca: **solo con referido** | tope aplicado |" if llm.get("internal_bank_role") else ""}
 
 **Brechas**
 {gaps}

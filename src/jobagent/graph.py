@@ -114,16 +114,21 @@ def company_check(state: State) -> dict:
 
 
 def mark_applied(state: State) -> dict:
-    ctx = state["ctx"]
+    """History match, plus the company pause (criteria §13): after N cold applications there that were rejected
+    or got no answer, the company is skipped until a referral is listed in config `company_pause.referrals`."""
+    ctx, pause = state["ctx"], state["config"].get("company_pause") or {}
     items = []
     for j in state["jobs"]:
         same, others = ctx.applied_match(j)
-        items.append(ScoredJob(job=j, applied_match=same, company_history=others))
-    return {"candidates": items, "stats": {"already_applied": sum(bool(i.applied_match) for i in items)}}
+        paused = ctx.paused(j, pause.get("after", 2), pause.get("referrals", [])) if pause else None
+        items.append(ScoredJob(job=j, applied_match=same, company_history=others, paused=paused))
+    return {"candidates": items, "stats": {"already_applied": sum(bool(i.applied_match) for i in items),
+                                           "paused": sum(bool(i.paused) for i in items)}}
 
 
 def fan_out(state: State):
-    todo = [i for i in state["candidates"] if not i.applied_match] if state["options"].get("score", True) else []
+    todo = ([i for i in state["candidates"] if not i.applied_match and not i.paused]
+            if state["options"].get("score", True) else [])
     done = [i for i in state["candidates"] if i not in todo]
     sends = [Send("score_one", {"item": i, "config": state["config"], "ctx": state["ctx"]}) for i in todo]
     sends.append(Send("passthrough", {"items": done}))
@@ -141,7 +146,8 @@ def score_one(task: ScoreTask) -> dict:
     except Exception as e:
         log.warning("score failed %s: %s", item.job.url, e)
         return {"scored": [item.model_copy(update={"error": f"{type(e).__name__}: {e}"[:300]})]}
-    total = scoring.weighted(s.dims, cfg["weights"], s.requires_operator_leadership, cfg["operator_cap"])
+    capped = s.requires_operator_leadership or s.internal_bank_role
+    total = scoring.weighted(s.dims, cfg["weights"], capped, cfg["operator_cap"])
     cov, missing = ats.coverage([k.model_dump() for k in s.keywords], ctx.cv[s.lang])
     return {"scored": [item.model_copy(update={"score": total, "band": scoring.band(total), "ats_before": cov,
                                                "ats_missing": missing, "llm": s.model_dump()})]}
@@ -167,19 +173,22 @@ def track(state: State) -> dict:
                          + (" · 👀 watch" if watch else ""))
         except Exception as e:
             log.warning("issue failed for %s: %s", s.job.url, e)
-    t.digest(lines, {k: state["stats"].get(k) for k in ("raw", "prefiltered", "new", "bands")}, pruned)
+    t.digest(lines, {k: state["stats"].get(k) for k in ("raw", "prefiltered", "new", "paused", "bands")}, pruned)
     return {"stats": {"issues": created, "pruned": len(pruned)}}
 
 
 def remember(state: State) -> dict:
     if state["options"].get("write_state"):
-        # errored postings are not remembered, so the next run retries them
-        state["ctx"].remember([i.job for i in state["scored"] if not i.error], date.today().isoformat())
+        # errored postings are not remembered, so the next run retries them; paused ones neither, so a
+        # referral added later lets them through
+        state["ctx"].remember([i.job for i in state["scored"] if not i.error and not i.paused],
+                              date.today().isoformat())
     return {}
 
 
 def summarize(state: State) -> dict:
-    bands = Counter(i.band or ("applied" if i.applied_match else "error") for i in state["scored"])
+    bands = Counter(i.band or ("applied" if i.applied_match else "paused" if i.paused else "error")
+                    for i in state["scored"])
     return {"stats": {"bands": dict(bands)}}
 
 

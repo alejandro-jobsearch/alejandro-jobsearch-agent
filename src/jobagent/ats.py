@@ -50,3 +50,28 @@ def coverage(keywords: list[dict], cv_text: str) -> tuple[int, list[str]]:
         else:
             missing.append(k["term"])
     return (round(100 * got / total) if total else 0), missing
+
+
+MIRROR_N = 5
+
+
+def mirror(cv_text: str, posting: str, n: int = MIRROR_N) -> tuple[int, list[str]]:
+    """% of CV words that sit inside a run of >= n consecutive words copied from the posting, plus those runs.
+
+    Keyword coverage rewards using the posting's vocabulary; this measures the opposite failure — sentences
+    lifted from the posting, which a human screener spots at once."""
+    cv, jd = _norm(cv_text).split(), _norm(posting).split()
+    grams = {tuple(jd[i:i + n]) for i in range(len(jd) - n + 1)}
+    covered: set[int] = set()
+    for i in range(len(cv) - n + 1):
+        if tuple(cv[i:i + n]) in grams:
+            covered.update(range(i, i + n))
+    runs, cur = [], []
+    for i in sorted(covered):
+        if cur and i != cur[-1] + 1:
+            runs.append(cur)
+            cur = []
+        cur.append(i)
+    if cur:
+        runs.append(cur)
+    return (round(100 * len(covered) / len(cv)) if cv else 0), [" ".join(cv[r[0]:r[-1] + 1]) for r in runs]
