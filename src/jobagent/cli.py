@@ -1,10 +1,10 @@
 """Run the pipeline.
 
     python -m jobagent.cli --data-dir ../alejandro-jobsearch-data --out out
-        [--skip jobspy boards] [--input out/jobs.jsonl] [--limit 10] [--no-score] [--write-state]
+        [--skip jobspy boards bumeran] [--input out/jobs.jsonl] [--limit 10] [--no-score] [--write-state]
         [--max-concurrency 6] [--track] [--prune-only]
 
---input reuses a previous sourcing run (skips both sources) — handy to iterate on scoring.
+--input reuses a previous sourcing run (skips every source) — handy to iterate on scoring.
 """
 import argparse
 import json
@@ -73,7 +73,7 @@ def main() -> int:
         return 0
     raw = []
     if a.input:
-        a.skip = ["jobspy", "boards"]
+        a.skip = ["jobspy", "boards", "bumeran"]
         raw = [Job(**json.loads(l)) for l in Path(a.input).read_text(encoding="utf-8").splitlines() if l.strip()]
     state = {"config": cfg, "ctx": Context.load(data), "raw": raw, "scored": [], "stats": {},
              "options": {"skip": a.skip, "limit": a.limit, "score": a.score, "write_state": a.write_state,

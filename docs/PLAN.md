@@ -134,3 +134,9 @@ No se ejecuta su código. Solo se usa como referencia de diseño.
 
 **2026-10-14 — Fuente HireHive**
 - Nuevo proveedor `hirehive` en `sources/boards.py` (API pública `https://<slug>.hirehive.com/api/v1/jobs`, paginada de a 30 por `nextPage`). Motivo: una vacante de arquitectura en un banco de inversión local estaba solo en su HireHive y JobSpy no la encontró (publicada antes de que existiera el cron y con un título fuera de los términos de búsqueda).
+
+**2026-10-30 — Fuente Bumeran Perú**
+- Nuevo nodo `source_bumeran` (`sources/bumeran.py`), en paralelo con boards y JobSpy. Motivo: una vacante de arquitectura de datos e IA en un holding financiero estaba solo en Bumeran.
+- La API de búsqueda (`/api/avisos/...`) y las páginas de aviso tienen el desafío anti-bots de Cloudflare, y no se intenta saltarlo. Se usa el sitemap público que figura en `robots.txt` (`sitemap_avisos_bum.xml`, ~36 mil avisos, se regenera a diario ~05:00 Lima). La empresa se separa del slug con `sitemap_empresas_bum.xml`.
+- Sin descripción, ubicación ni fecha: el LLM puntúa solo por el título. Como el sitemap es el catálogo completo y no permite buscar, se cruzan los términos (`jobspy.terms` + `bumeran.extra_terms`) palabra por palabra con el título (sin la vocal de género; las siglas como TI/IA deben coincidir con la palabra completa), luego se aplica el prefiltro y un tope `max_jobs`.
+- Primera corrida: 36,611 avisos → 51 por término → 46 tras deduplicar.

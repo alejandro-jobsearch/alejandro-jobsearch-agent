@@ -218,3 +218,73 @@ def test_llmscore_internal_bank_role_defaults_false():
                                          "lang": "es", "english_work": "no", "seniority_real": "", "gaps": [],
                                          "summary": "", "keywords": []})
     assert s.internal_bank_role is False
+
+
+BUMERAN_JOBS = """<?xml version="1.0" encoding="utf-8"?><urlset>
+  <url><loc>https://www.bumeran.com.pe/empleos/gerente-de-tienda-cusco-promart-1118500001.html</loc></url>
+  <url><loc>https://www.bumeran.com.pe/empleos/arquitecto-a-de-soluciones-de-datos-e-inteligencia-artificial-sector-banca-1118454966.html</loc></url>
+  <url><loc>https://www.bumeran.com.pe/empleos/arquitecto-de-datos-senior-azure-indra-peru-1118499000.html</loc></url>
+  <url><loc>https://www.bumeran.com.pe/empleos/sub-gerente-de-ti-adecco-peru-s.a.-1118499500.html</loc></url>
+</urlset>"""
+BUMERAN_COMPANIES = """<urlset>
+  <url><loc>https://www.bumeran.com.pe/perfiles/empresa_indra_1.html</loc></url>
+  <url><loc>https://www.bumeran.com.pe/perfiles/empresa_indra-peru_2.html</loc></url>
+  <url><loc>https://www.bumeran.com.pe/perfiles/empresa_promart_3.html</loc></url>
+  <url><loc>https://www.bumeran.com.pe/perfiles/empresa_adecco-peru-s.a._4.html</loc></url>
+</urlset>"""
+
+
+def test_bumeran_sitemap_parse_splits_company_newest_first():
+    from jobagent.sources import bumeran
+
+    jobs = bumeran.parse(BUMERAN_JOBS, bumeran.companies(BUMERAN_COMPANIES))
+    assert [(j.company, j.title) for j in jobs] == [
+        ("Promart", "Gerente de tienda cusco"),
+        ("Adecco Peru S.A.", "Sub gerente de ti"),
+        ("Indra Peru", "Arquitecto de datos senior azure"),   # longest company slug wins over "indra"
+        ("", "Arquitecto a de soluciones de datos e inteligencia artificial sector banca"),  # confidential
+    ]
+    assert jobs[3].url.endswith("-sector-banca-1118454966.html")
+    assert all(j.source == "bumeran" and j.location == "Perú" and j.description for j in jobs)
+
+
+def test_bumeran_term_match_stems_gender_and_keeps_acronyms_whole():
+    from jobagent.sources.bumeran import matches
+
+    terms = ["Gerente de TI", "Arquitecto de Soluciones de Datos", "IA"]
+    assert matches("Arquitecto a de soluciones de datos e inteligencia artificial", terms) == terms[1]
+    assert matches("Arquitecta de soluciones de datos", terms) == terms[1]
+    assert matches("Sub gerente de ti", terms) == terms[0]
+    assert matches("Gerente de tienda cusco", terms) is None        # "ti" is not "tienda"
+    assert matches("Tech lead de banca digital ia", terms) == "IA"
+    assert matches("Ingeniero de datos", terms) is None
+
+
+def test_bumeran_search_filters_and_caps(monkeypatch):
+    from jobagent.sources import bumeran
+
+    xml = {bumeran.JOBS_SITEMAP: BUMERAN_JOBS, bumeran.COMPANIES_SITEMAP: BUMERAN_COMPANIES}
+    monkeypatch.setattr(bumeran, "_get", lambda url: xml[url])
+    terms = ["Gerente de TI", "Arquitecto de Datos"]
+    got = bumeran.search(terms, keep=lambda j: "senior" not in j.title)
+    assert [(j.title, j.search_term) for j in got] == [
+        ("Sub gerente de ti", "Gerente de TI"),
+        ("Arquitecto a de soluciones de datos e inteligencia artificial sector banca", "Arquitecto de Datos")]
+    assert len(bumeran.search(terms, max_jobs=1)) == 1
+
+
+def test_source_bumeran_is_optional_and_never_raises(monkeypatch):
+    from jobagent import graph
+
+    assert graph.source_bumeran({"config": {}, "options": {}}) == {"raw": []}
+    cfg = {"bumeran": {"extra_terms": ["IA"]}, "jobspy": {"terms": ["CTO"]}, "prefilter": {
+        "title_include": ["."], "title_exclude": ["^$"], "geo_keep": ["."]}}
+    assert graph.source_bumeran({"config": cfg, "options": {"skip": ["bumeran"]}}) == {"raw": []}
+    seen = {}
+
+    def boom(terms, keep, max_jobs):
+        seen["terms"] = terms
+        raise RuntimeError("403")
+    monkeypatch.setattr(graph.bumeran, "search", boom)
+    assert graph.source_bumeran({"config": cfg, "options": {}}) == {"raw": []}
+    assert seen["terms"] == ["CTO", "IA"]

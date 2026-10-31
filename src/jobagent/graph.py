@@ -1,7 +1,8 @@
 """LangGraph pipeline.
 
-START ─┬─ source_boards ─┬─ prefilter ─ unseen ─ company_check ─ mark_applied ─┬─ score_one ×N (Send) ─┬─ summarize ─ track ─ remember ─ END
-       └─ source_jobspy ─┘                                                   └─ passthrough ─────────┘
+START ─┬─ source_boards ──┬─ prefilter ─ unseen ─ company_check ─ mark_applied ─┬─ score_one ×N (Send) ─┬─ summarize ─ track ─ remember ─ END
+       ├─ source_jobspy ──┤                                                   └─ passthrough ─────────┘
+       └─ source_bumeran ─┘
 
 `company_check` drops small/regional IT-services consultancies (LinkedIn company page). `track` prunes board
 cards whose posting no longer accepts applications, then turns selected postings into GitHub Issues;
@@ -20,7 +21,7 @@ from langgraph.types import Send
 from jobagent import ats, linkedin, scoring
 from jobagent.models import Job, ScoredJob
 from jobagent.prefilter import Prefilter
-from jobagent.sources import boards, jobspy_src
+from jobagent.sources import boards, bumeran, jobspy_src
 from jobagent.state import Context
 
 log = logging.getLogger("jobagent")
@@ -63,6 +64,20 @@ def source_jobspy(state: State) -> dict:
         return {"raw": []}
     return {"raw": jobspy_src.search(js["terms"], js["locations"], js["sites"], js["hours_old"],
                                      js["per_term"], js.get("sleep", 4.0))}
+
+
+def source_bumeran(state: State) -> dict:
+    """Bumeran Perú (sitemap, title only). Terms default to `jobspy.terms`, plus `bumeran.extra_terms`."""
+    bm = state["config"].get("bumeran")
+    if not bm or "bumeran" in state["options"].get("skip", []):
+        return {"raw": []}
+    terms = bm.get("terms") or (state["config"].get("jobspy") or {}).get("terms", [])
+    try:
+        return {"raw": bumeran.search(terms + bm.get("extra_terms", []), Prefilter(state["config"]["prefilter"]),
+                                      bm.get("max_jobs", 100))}
+    except Exception as e:  # a blocked or failed download must not sink the other sources
+        log.warning("[bumeran] %s", e)
+        return {"raw": []}
 
 
 def prefilter(state: State) -> dict:
@@ -194,14 +209,16 @@ def summarize(state: State) -> dict:
 
 def build():
     g = StateGraph(State)
-    for name, fn in [("source_boards", source_boards), ("source_jobspy", source_jobspy), ("prefilter", prefilter),
+    for name, fn in [("source_boards", source_boards), ("source_jobspy", source_jobspy),
+                     ("source_bumeran", source_bumeran), ("prefilter", prefilter),
                      ("unseen", unseen), ("company_check", company_check), ("mark_applied", mark_applied), ("score_one", score_one),
                      ("passthrough", passthrough), ("summarize", summarize), ("track", track),
                      ("remember", remember)]:
         g.add_node(name, fn)
     g.add_edge(START, "source_boards")
     g.add_edge(START, "source_jobspy")
-    g.add_edge(["source_boards", "source_jobspy"], "prefilter")
+    g.add_edge(START, "source_bumeran")
+    g.add_edge(["source_boards", "source_jobspy", "source_bumeran"], "prefilter")
     g.add_edge("prefilter", "unseen")
     g.add_edge("unseen", "company_check")
     g.add_edge("company_check", "mark_applied")
