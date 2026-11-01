@@ -4,9 +4,10 @@ START ─┬─ source_boards ──┬─ prefilter ─ unseen ─ company_chec
        ├─ source_jobspy ──┤                                                   └─ passthrough ─────────┘
        └─ source_bumeran ─┘
 
-`company_check` drops small/regional IT-services consultancies (LinkedIn company page). `track` prunes board
-cards whose posting no longer accepts applications, then turns selected postings into GitHub Issues;
-`remember` persists what was seen.
+`company_check` drops small/regional IT-services consultancies (LinkedIn company page). Bumeran postings carry
+only a title, so they skip scoring (passthrough) and go to the digest's triage list, from where the manual
+intake form scores the full posting. `track` prunes board cards whose posting no longer accepts applications,
+then turns selected postings into GitHub Issues; `remember` persists what was seen and the Bumeran watermark.
 """
 import logging
 import operator
@@ -19,7 +20,7 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.types import Send
 
 from jobagent import ats, linkedin, scoring
-from jobagent.models import Job, ScoredJob
+from jobagent.models import Job, ScoredJob, _norm
 from jobagent.prefilter import Prefilter
 from jobagent.sources import boards, bumeran, jobspy_src
 from jobagent.state import Context
@@ -67,14 +68,18 @@ def source_jobspy(state: State) -> dict:
 
 
 def source_bumeran(state: State) -> dict:
-    """Bumeran Perú (sitemap, title only). Terms default to `jobspy.terms`, plus `bumeran.extra_terms`."""
+    """Bumeran Perú (sitemap, title only), postings newer than the stored watermark. Terms default to
+    `jobspy.terms`, plus `bumeran.extra_terms`."""
     bm = state["config"].get("bumeran")
-    if not bm or "bumeran" in state["options"].get("skip", []):
+    if not bm or not bm.get("enabled", True) or "bumeran" in state["options"].get("skip", []):
         return {"raw": []}
     terms = bm.get("terms") or (state["config"].get("jobspy") or {}).get("terms", [])
     try:
-        return {"raw": bumeran.search(terms + bm.get("extra_terms", []), Prefilter(state["config"]["prefilter"]),
-                                      bm.get("max_jobs", 100))}
+        ctx = state.get("ctx")
+        jobs, last_id = bumeran.search(terms + bm.get("extra_terms", []), Prefilter(state["config"]["prefilter"]),
+                                       bm.get("max_jobs", 25), ctx.bumeran_last_id if ctx else 0,
+                                       bm.get("companies", []))
+        return {"raw": jobs, "stats": {"bumeran_last_id": last_id}}
     except Exception as e:  # a blocked or failed download must not sink the other sources
         log.warning("[bumeran] %s", e)
         return {"raw": []}
@@ -141,10 +146,16 @@ def mark_applied(state: State) -> dict:
                                            "paused": sum(bool(i.paused) for i in items)}}
 
 
+def title_only(j: Job) -> bool:
+    """No description to judge it by (Bumeran sitemap): triage list, not scoring."""
+    return j.description == bumeran.NO_DESCRIPTION
+
+
 def fan_out(state: State):
-    todo = ([i for i in state["candidates"] if not i.applied_match and not i.paused]
+    todo = ([i for i in state["candidates"] if not i.applied_match and not i.paused and not title_only(i.job)]
             if state["options"].get("score", True) else [])
-    done = [i for i in state["candidates"] if i not in todo]
+    done = [i.model_copy(update={"band": "triage"}) if title_only(i.job) and not i.applied_match and not i.paused
+            else i for i in state["candidates"] if i not in todo]
     sends = [Send("score_one", {"item": i, "config": state["config"], "ctx": state["ctx"]}) for i in todo]
     sends.append(Send("passthrough", {"items": done}))
     return sends
@@ -173,7 +184,7 @@ def track(state: State) -> dict:
     opts = state["options"]
     if not opts.get("track"):
         return {}
-    from jobagent.tracker import Tracker, select
+    from jobagent.tracker import Tracker, intake_link, select, watch_re
 
     cfg = state["config"]["tracker"]
     t = Tracker(opts["github_token"], opts["repo"], cfg["org"], cfg["project_number"], opts.get("issues_token"))
@@ -188,7 +199,15 @@ def track(state: State) -> dict:
                          + (" · 👀 watch" if watch else ""))
         except Exception as e:
             log.warning("issue failed for %s: %s", s.job.url, e)
-    t.digest(lines, {k: state["stats"].get(k) for k in ("raw", "prefiltered", "new", "paused", "bands")}, pruned)
+    # title-only postings: watched companies first (the company may sit in the title, e.g. "... bcp")
+    watch = watch_re(cfg)
+    triage = sorted(((s, bool(watch and watch.search(_norm(f"{s.job.company} {s.job.title}"))))
+                     for s in state["scored"] if s.band == "triage"), key=lambda t: not t[1])
+    triage_lines = [f"- [{s.job.title}]({s.job.url}) — {s.job.company or 'empresa no indicada'}"
+                    + (" · 👀" if w else "") + f" · [evaluar]({intake_link(opts['repo'], s.job)})"
+                    for s, w in triage]
+    t.digest(lines, {k: state["stats"].get(k) for k in ("raw", "prefiltered", "new", "paused", "bands")}, pruned,
+             triage_lines)
     return {"stats": {"issues": created, "pruned": len(pruned)}}
 
 
@@ -198,6 +217,8 @@ def remember(state: State) -> dict:
         # referral added later lets them through
         state["ctx"].remember([i.job for i in state["scored"] if not i.error and not i.paused],
                               date.today().isoformat())
+        if last_id := state["stats"].get("bumeran_last_id"):
+            state["ctx"].save_bumeran(last_id, date.today().isoformat())
     return {}
 
 

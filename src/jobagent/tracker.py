@@ -10,11 +10,12 @@ import logging
 import re
 import time
 from datetime import date
+from urllib.parse import urlencode
 
 import httpx
 
 from jobagent import linkedin
-from jobagent.models import ScoredJob, _norm
+from jobagent.models import Job, ScoredJob, _norm
 
 log = logging.getLogger(__name__)
 API = "https://api.github.com"
@@ -92,11 +93,14 @@ class Tracker:
         missing = ", ".join(s.ats_missing) or "(ninguna)"
         hist = "\n".join(f"- {h}" for h in s.company_history)
         sal = f"{j.salary_min:,.0f}–{j.salary_max:,.0f} {j.currency}" if j.salary_min else "no publicado"
+        exclusion = (f"\n\n> ⛔ **Descartar según criterios:** {llm.get('exclusion_reason') or 'aplica una exclusión dura'}"
+                     if llm.get("hard_exclusion") or llm.get("temporary") else "")
         return f"""**[{j.title}]({j.url})** — {j.company} · {j.location or 's/ubicación'} · fuente: {j.source} · publicada: {j.date_posted or '?'} · salario: {sal}
 
 **Score {s.score}** ({s.band}) · **ATS antes {s.ats_before}%** · lane {llm.get('lane', '–')} · inglés de trabajo: {llm.get('english_work', '–')} · nivel real: {llm.get('seniority_real', '–')}
 
 > {llm.get('summary', '')}
+{exclusion}
 
 | Dimensión | 0–100 |
 |---|---|
@@ -112,7 +116,7 @@ class Tracker:
 
 <details><summary>Descripción original</summary>
 
-{j.description[:6000]}
+{j.description[:12000]}
 </details>
 
 <!-- job-key: {j.key} -->
@@ -136,6 +140,26 @@ class Tracker:
                          p=self.project_id, c=issue["node_id"])["addProjectV2ItemById"]["item"]["id"]
         llm = s.llm or {}
         for field, value in [("Status", "Nueva"), ("Score", s.score), ("ATS antes", s.ats_before),
+                             ("Empresa", s.job.company), ("Lane", llm.get("lane")),
+                             ("Fecha publicacion", s.job.date_posted)]:
+            self._set(item, field, value)
+        return issue["html_url"]
+
+    def update_existing(self, number: int, s: ScoredJob, status: str = "Evaluada") -> str:
+        """Replace a manual intake issue with the scored analysis and add/update its Project card."""
+        issue = self.issue(number)
+        r = self.issues.patch(f"/repos/{self.repo}/issues/{number}", json={
+            "title": f"[{s.job.company}] {s.job.title}"[:250],
+            "body": self.body(s),
+            "labels": self.labels(s, watch=False),
+        })
+        r.raise_for_status()
+        item = self.item_for_issue(number)
+        if not item:
+            item = self._gql("""mutation($p:ID!,$c:ID!){ addProjectV2ItemById(input:{projectId:$p,contentId:$c}){ item{ id } } }""",
+                             p=self.project_id, c=issue["node_id"])["addProjectV2ItemById"]["item"]["id"]
+        llm = s.llm or {}
+        for field, value in [("Status", status), ("Score", s.score), ("ATS antes", s.ats_before),
                              ("Empresa", s.job.company), ("Lane", llm.get("lane")),
                              ("Fecha publicacion", s.job.date_posted)]:
             self._set(item, field, value)
@@ -209,7 +233,7 @@ class Tracker:
                 log.warning("prune failed for #%s: %s", it["number"], e)
         return pruned
 
-    def digest(self, lines: list[str], stats: dict, pruned: list[str] = ()) -> None:
+    def digest(self, lines: list[str], stats: dict, pruned: list[str] = (), triage: list[str] = ()) -> None:
         r = self.issues.get(f"/repos/{self.repo}/issues", params={"labels": "digest", "state": "open", "per_page": 1})
         r.raise_for_status()
         if r.json():
@@ -224,9 +248,11 @@ class Tracker:
         bands = ", ".join(f"{k}: {v}" for k, v in (stats.get("bands") or {}).items()) or "–"
         foot = (f"Avisos revisados: {stats.get('raw', '–')} · tras filtro: {stats.get('prefiltered', '–')} · "
                 f"nuevas puntuadas: {stats.get('new', '–')} · bandas: {bands}")
+        triage_md = ("\n\n**Bumeran — solo título, sin puntuar** (abrir el aviso y, si vale la pena, «evaluar» pegando "
+                     "la descripción completa):\n" + "\n".join(triage)) if triage else ""
         closed = f"\n\n🔒 Cerradas (ya no aceptan postulaciones): {'; '.join(pruned)}" if pruned else ""
         text = f"### {date.today().isoformat()}\n\n" + ("\n".join(lines) if lines else "Sin vacantes nuevas sobre el umbral.") + \
-               closed + f"\n\n<sub>{foot}</sub>"
+               triage_md + closed + f"\n\n<sub>{foot}</sub>"
         self.issues.post(f"/repos/{self.repo}/issues/{number}/comments", json={"body": text}).raise_for_status()
 
 
@@ -241,11 +267,23 @@ def job_url(body: str) -> str | None:
     return m.group(1) if m else None
 
 
+def watch_re(cfg: dict) -> re.Pattern | None:
+    """Matches a normalized name against `watch_companies` (criteria §10, §13)."""
+    names = [re.escape(_norm(w)) for w in cfg.get("watch_companies", [])]
+    return re.compile(rf"\b({'|'.join(names)})\b") if names else None
+
+
+def intake_link(repo: str, job: Job) -> str:
+    """The Bumeran intake form prefilled with what the sitemap gives; pasting the description gets it scored."""
+    return f"https://github.com/{repo}/issues/new?" + urlencode({
+        "template": "bumeran-intake.yml", "title": f"[Bumeran Intake] {job.title}",
+        "url": job.url, "company": job.company, "cargo": job.title})
+
+
 def select(scored: list[ScoredJob], cfg: dict) -> list[tuple[ScoredJob, bool]]:
     """(item, is_watch) for postings that deserve an issue: score ≥ min_score, or a watched company ≥ watch_min.
     Postings the LLM flagged as temporary contracts or hard exclusions never get an issue (criteria §7)."""
-    names = [re.escape(_norm(w)) for w in cfg.get("watch_companies", [])]
-    watch_re = re.compile(rf"\b({'|'.join(names)})\b") if names else None
+    watch = watch_re(cfg)
     out = []
     for s in scored:
         llm = s.llm or {}
@@ -253,6 +291,6 @@ def select(scored: list[ScoredJob], cfg: dict) -> list[tuple[ScoredJob, bool]]:
             continue
         if s.score >= cfg["min_score"]:
             out.append((s, False))
-        elif s.score >= cfg["watch_min"] and watch_re and watch_re.search(_norm(s.job.company)):
+        elif s.score >= cfg["watch_min"] and watch and watch.search(_norm(s.job.company)):
             out.append((s, True))
     return sorted(out, key=lambda t: -t[0].score)

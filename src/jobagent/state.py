@@ -19,6 +19,7 @@ class Context:
     cv: dict[str, str]                      # lang -> plain text
     applied: list[dict]
     seen: set[str] = field(default_factory=set)
+    bumeran_last_id: int = 0                # highest Bumeran posting id already looked at (state/bumeran.json)
 
     @classmethod
     def load(cls, data_dir: str | Path) -> "Context":
@@ -30,12 +31,15 @@ class Context:
                 if line.strip():
                     r = json.loads(line)
                     seen |= {r["key"], r["url"]}
+        bumeran_file = d / "state" / "bumeran.json"
         return cls(
             data_dir=d,
             criteria=(d / "config" / "criteria.md").read_text(encoding="utf-8"),
             cv={lang: (d / "cv" / f"cv-{lang}.md").read_text(encoding="utf-8") for lang in ("en", "es")},
             applied=yaml.safe_load((d / "config" / "applied.yml").read_text(encoding="utf-8"))["applied"],
             seen=seen,
+            bumeran_last_id=json.loads(bumeran_file.read_text(encoding="utf-8"))["last_id"]
+            if bumeran_file.exists() else 0,
         )
 
     def is_seen(self, j: Job) -> bool:
@@ -74,3 +78,8 @@ class Context:
         with f.open("a", encoding="utf-8") as fh:
             for j in jobs:
                 fh.write(json.dumps({"key": j.key, "url": j.url, "seen": today}, ensure_ascii=False) + "\n")
+
+    def save_bumeran(self, last_id: int, today: str) -> None:
+        f = self.data_dir / "state" / "bumeran.json"
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(json.dumps({"last_id": last_id, "updated": today}) + "\n", encoding="utf-8")

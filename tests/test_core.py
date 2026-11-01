@@ -1,5 +1,5 @@
 from jobagent import ats, scoring
-from jobagent.models import Job
+from jobagent.models import Job, ScoredJob
 from jobagent.prefilter import Prefilter
 
 CV = "Led enterprise architecture (TOGAF 9) and data governance programs; defined technology roadmaps."
@@ -260,17 +260,75 @@ def test_bumeran_term_match_stems_gender_and_keeps_acronyms_whole():
     assert matches("Ingeniero de datos", terms) is None
 
 
-def test_bumeran_search_filters_and_caps(monkeypatch):
+def test_bumeran_term_match_is_a_phrase_not_a_bag_of_words():
+    from jobagent.sources.bumeran import matches
+
+    terms = ["Gerente de Tecnología", "Arquitecto de Datos", "Gerente de TI", "Arquitecto de Soluciones"]
+    assert matches("Gerente de negocios canal tecnologia equipos moviles", terms) is None   # words apart
+    assert matches("Gestor de proyectos de migracion de datos arquitecturas distribuidas", terms) is None
+    assert matches("Gerente de proyectos ti product manager", terms) is None
+    assert matches("Gerente de tecnologias de informacion", terms) == terms[0]              # plural folded
+    assert matches("Arquitecto senior de soluciones on premise aws", terms) == terms[3]      # seniority filler
+    assert matches("Arquitecta de datos", terms) == terms[1]
+
+
+def test_bumeran_parse_knows_recruiters_and_extra_companies():
+    from jobagent.sources import bumeran
+
+    xml = """<urlset>
+  <url><loc>https://www.bumeran.com.pe/empleos/arquitecto-de-soluciones-experis-peru-1118000003.html</loc></url>
+  <url><loc>https://www.bumeran.com.pe/empleos/ia-business-specialist-senior-adecco-bcp-1118000002.html</loc></url>
+  <url><loc>https://www.bumeran.com.pe/empleos/data-architect-acme-labs-1118000001.html</loc></url>
+</urlset>"""
+    jobs = bumeran.parse(xml, ["acme-labs"])
+    assert [(j.company, j.title) for j in jobs] == [
+        ("Experis Peru", "Arquitecto de soluciones"),
+        ("Adecco Bcp", "Ia business specialist senior"),     # "adecco-bcp" wins over "bcp"
+        ("Acme Labs", "Data architect")]
+
+
+def test_bumeran_search_filters_caps_and_keeps_only_new_ids(monkeypatch):
     from jobagent.sources import bumeran
 
     xml = {bumeran.JOBS_SITEMAP: BUMERAN_JOBS, bumeran.COMPANIES_SITEMAP: BUMERAN_COMPANIES}
     monkeypatch.setattr(bumeran, "_get", lambda url: xml[url])
-    terms = ["Gerente de TI", "Arquitecto de Datos"]
-    got = bumeran.search(terms, keep=lambda j: "senior" not in j.title)
+    terms = ["Gerente de TI", "Arquitecto de Datos", "Arquitecto de Soluciones de Datos"]
+    got, last_id = bumeran.search(terms, keep=lambda j: "senior" not in j.title)
     assert [(j.title, j.search_term) for j in got] == [
         ("Sub gerente de ti", "Gerente de TI"),
-        ("Arquitecto a de soluciones de datos e inteligencia artificial sector banca", "Arquitecto de Datos")]
-    assert len(bumeran.search(terms, max_jobs=1)) == 1
+        ("Arquitecto a de soluciones de datos e inteligencia artificial sector banca",
+         "Arquitecto de Soluciones de Datos")]
+    assert last_id == 1118500001                              # highest id in the sitemap, matched or not
+    assert len(bumeran.search(terms, max_jobs=1)[0]) == 1
+    got, _ = bumeran.search(terms, after_id=1118499000)
+    assert [j.title for j in got] == ["Sub gerente de ti"]
+    assert bumeran.search(terms, after_id=1118600000) == ([], 1118600000)   # watermark never goes back
+
+
+def test_title_only_postings_skip_scoring_and_go_to_triage():
+    from jobagent import graph
+    from jobagent.sources import bumeran
+
+    bum = ScoredJob(job=Job(source="bumeran", company="Indra Peru", title="Arquitecto de datos",
+                            url="https://www.bumeran.com.pe/empleos/x-1.html", description=bumeran.NO_DESCRIPTION))
+    li = ScoredJob(job=Job(source="linkedin", company="Acme", title="CTO", url="https://x/2", description="desc"))
+    sends = graph.fan_out({"candidates": [bum, li], "options": {}, "config": {}, "ctx": None})
+    assert [s.arg["item"].job.source for s in sends if s.node == "score_one"] == ["linkedin"]
+    assert [i.band for i in sends[-1].arg["items"]] == ["triage"]
+
+
+def test_intake_link_prefills_the_bumeran_form():
+    from urllib.parse import parse_qs, urlparse
+
+    from jobagent.tracker import intake_link
+
+    j = Job(source="bumeran", company="Indra Peru", title="Arquitecto de datos",
+            url="https://www.bumeran.com.pe/empleos/x-1.html")
+    u = urlparse(intake_link("org/data", j))
+    q = parse_qs(u.query)
+    assert u.path == "/org/data/issues/new" and q["template"] == ["bumeran-intake.yml"]
+    assert q["title"] == ["[Bumeran Intake] Arquitecto de datos"] and q["cargo"] == ["Arquitecto de datos"]
+    assert q["url"] == [j.url] and q["company"] == ["Indra Peru"]
 
 
 def test_source_bumeran_is_optional_and_never_raises(monkeypatch):
@@ -282,7 +340,7 @@ def test_source_bumeran_is_optional_and_never_raises(monkeypatch):
     assert graph.source_bumeran({"config": cfg, "options": {"skip": ["bumeran"]}}) == {"raw": []}
     seen = {}
 
-    def boom(terms, keep, max_jobs):
+    def boom(terms, keep, max_jobs, after_id, companies):
         seen["terms"] = terms
         raise RuntimeError("403")
     monkeypatch.setattr(graph.bumeran, "search", boom)

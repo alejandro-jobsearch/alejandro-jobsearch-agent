@@ -137,6 +137,11 @@ No se ejecuta su código. Solo se usa como referencia de diseño.
 
 **2026-10-30 — Fuente Bumeran Perú**
 - Nuevo nodo `source_bumeran` (`sources/bumeran.py`), en paralelo con boards y JobSpy. Motivo: una vacante de arquitectura de datos e IA en un holding financiero estaba solo en Bumeran.
-- La API de búsqueda (`/api/avisos/...`) y las páginas de aviso tienen el desafío anti-bots de Cloudflare, y no se intenta saltarlo. Se usa el sitemap público que figura en `robots.txt` (`sitemap_avisos_bum.xml`, ~36 mil avisos, se regenera a diario ~05:00 Lima). La empresa se separa del slug con `sitemap_empresas_bum.xml`.
-- Sin descripción, ubicación ni fecha: el LLM puntúa solo por el título. Como el sitemap es el catálogo completo y no permite buscar, se cruzan los términos (`jobspy.terms` + `bumeran.extra_terms`) palabra por palabra con el título (sin la vocal de género; las siglas como TI/IA deben coincidir con la palabra completa), luego se aplica el prefiltro y un tope `max_jobs`.
-- Primera corrida: 36,611 avisos → 51 por término → 46 tras deduplicar.
+- La API de búsqueda y las páginas de aviso tienen el desafío anti-bots de Cloudflare, y no se intenta saltarlo. Se usa el sitemap público de `robots.txt` (`sitemap_avisos_bum.xml`, ~36 mil avisos, `lastmod` igual para todos): solo título y empresa, sin descripción ni fecha.
+
+**2026-11-01 — Bumeran: triage en vez de scoring por título**
+- La primera corrida (31-oct) puntuó 45 avisos solo por el título y creó 8 Issues: el LLM puso compensación 100 con salario desconocido y calculó ATS/keywords sin requisitos reales.
+- Los avisos de Bumeran sin descripción ya no se puntúan ni crean Issues: `fan_out` los manda a `passthrough` con banda `triage` y el digest los lista (empresas watch primero) con un enlace «evaluar» al formulario de intake prellenado.
+- `jobagent.intake` (formulario `bumeran-intake.yml` del repo de datos) puntúa el aviso con la descripción completa pegada y actualiza ese mismo issue en el Project v2, con deduplicación por URL e historial de postulaciones; si faltan datos comenta qué corregir. `bumeran.enabled: false` apaga la fuente.
+- Coincidencia por frase: las palabras del término en orden y contiguas, ignorando artículos y senior/sr, con género y plural plegados y sin prefijos ("arquitecturas" ya no es "arquitecto"). Se quitó el término "IA".
+- Solo avisos con id mayor a `state/bumeran.json` (los ids son correlativos); `max_jobs: 25`. Reclutadoras frecuentes que no están en el sitemap de empresas (`RECRUITERS`, más `bumeran.companies`) se separan del título.
