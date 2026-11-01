@@ -199,9 +199,9 @@ def track(state: State) -> dict:
                          + (" · 👀 watch" if watch else ""))
         except Exception as e:
             log.warning("issue failed for %s: %s", s.job.url, e)
-    # title-only postings: watched companies first (the company may sit in the title, e.g. "... bcp")
+    # title-only postings, watched companies first (company only: "aws"/"sap" in a title is a skill, not AWS)
     watch = watch_re(cfg)
-    triage = sorted(((s, bool(watch and watch.search(_norm(f"{s.job.company} {s.job.title}"))))
+    triage = sorted(((s, bool(watch and watch.search(_norm(s.job.company))))
                      for s in state["scored"] if s.band == "triage"), key=lambda t: not t[1])
     triage_lines = [f"- [{s.job.title}]({s.job.url}) — {s.job.company or 'empresa no indicada'}"
                     + (" · 👀" if w else "") + f" · [evaluar]({intake_link(opts['repo'], s.job)})"
