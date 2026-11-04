@@ -273,6 +273,12 @@ def watch_re(cfg: dict) -> re.Pattern | None:
     return re.compile(rf"\b({'|'.join(names)})\b") if names else None
 
 
+def watch_title_re(cfg: dict) -> re.Pattern | None:
+    """Matches a normalized title against `watch_titles`, role families worth reviewing at any company."""
+    patterns = cfg.get("watch_titles", [])
+    return re.compile("|".join(patterns)) if patterns else None
+
+
 def intake_link(repo: str, job: Job) -> str:
     """The Bumeran intake form prefilled with what the sitemap gives; pasting the description gets it scored."""
     return f"https://github.com/{repo}/issues/new?" + urlencode({
@@ -281,9 +287,10 @@ def intake_link(repo: str, job: Job) -> str:
 
 
 def select(scored: list[ScoredJob], cfg: dict) -> list[tuple[ScoredJob, bool]]:
-    """(item, is_watch) for postings that deserve an issue: score ≥ min_score, or a watched company ≥ watch_min.
+    """(item, is_watch) for postings that deserve an issue: score ≥ min_score, or a watched company or title
+    ≥ watch_min.
     Postings the LLM flagged as temporary contracts or hard exclusions never get an issue (criteria §7)."""
-    watch = watch_re(cfg)
+    watch, watch_title = watch_re(cfg), watch_title_re(cfg)
     out = []
     for s in scored:
         llm = s.llm or {}
@@ -291,6 +298,7 @@ def select(scored: list[ScoredJob], cfg: dict) -> list[tuple[ScoredJob, bool]]:
             continue
         if s.score >= cfg["min_score"]:
             out.append((s, False))
-        elif s.score >= cfg["watch_min"] and watch and watch.search(_norm(s.job.company)):
+        elif s.score >= cfg["watch_min"] and ((watch and watch.search(_norm(s.job.company)))
+                                              or (watch_title and watch_title.search(_norm(s.job.title)))):
             out.append((s, True))
     return sorted(out, key=lambda t: -t[0].score)

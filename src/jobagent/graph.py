@@ -184,7 +184,7 @@ def track(state: State) -> dict:
     opts = state["options"]
     if not opts.get("track"):
         return {}
-    from jobagent.tracker import Tracker, intake_link, select, watch_re
+    from jobagent.tracker import Tracker, intake_link, select, watch_re, watch_title_re
 
     cfg = state["config"]["tracker"]
     t = Tracker(opts["github_token"], opts["repo"], cfg["org"], cfg["project_number"], opts.get("issues_token"))
@@ -199,9 +199,11 @@ def track(state: State) -> dict:
                          + (" · 👀 watch" if watch else ""))
         except Exception as e:
             log.warning("issue failed for %s: %s", s.job.url, e)
-    # title-only postings, watched companies first (company only: "aws"/"sap" in a title is a skill, not AWS)
-    watch = watch_re(cfg)
-    triage = sorted(((s, bool(watch and watch.search(_norm(s.job.company))))
+    # title-only postings, watched first. The company list is matched on the company only ("aws"/"sap" in a title
+    # is a skill, not AWS); `watch_titles` are role families, so those are matched on the title.
+    watch, watch_title = watch_re(cfg), watch_title_re(cfg)
+    triage = sorted(((s, bool((watch and watch.search(_norm(s.job.company)))
+                              or (watch_title and watch_title.search(_norm(s.job.title)))))
                      for s in state["scored"] if s.band == "triage"), key=lambda t: not t[1])
     triage_lines = [f"- [{s.job.title}]({s.job.url}) — {s.job.company or 'empresa no indicada'}"
                     + (" · 👀" if w else "") + f" · [evaluar]({intake_link(opts['repo'], s.job)})"

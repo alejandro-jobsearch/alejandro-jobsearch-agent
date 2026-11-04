@@ -59,6 +59,18 @@ def test_tracker_select_threshold_and_watch_word_boundary():
     assert [(s.job.company, w) for s, w in picked] == [("Acme", False), ("Globant", True), ("EY Peru", True)]
 
 
+def test_tracker_select_watch_titles():
+    from jobagent.models import ScoredJob
+    from jobagent.tracker import select
+
+    mk = lambda title, score: ScoredJob(job=Job(source="x", company="Acme", title=title, url=title), score=score)
+    cfg = {"min_score": 75, "watch_min": 60, "watch_titles": [r"\b(jefe|gerente)\b.{0,40}\b(transformacion|tecnologia)"]}
+    picked = select([mk("Jefe de Transformación Digital", 65), mk("Gerente de Tecnología", 74),
+                     mk("Jefe de Tecnología", 59), mk("Data Lead", 70)], cfg)
+    assert [(s.job.title, w) for s, w in picked] == [("Gerente de Tecnología", True),
+                                                     ("Jefe de Transformación Digital", True)]
+
+
 def test_prefilter_job_type_and_company_blocklist():
     pf = Prefilter({"title_include": ["head"], "title_exclude": [r"\btemporal\b"], "geo_keep": ["lima"],
                     "job_type_exclude": ["temporary", "internship"], "company_exclude": [r"\bnovacomp\b"]})
