@@ -10,6 +10,7 @@ intake form scores the full posting. `track` prunes board cards whose posting no
 then turns selected postings into GitHub Issues; `remember` persists what was seen and the Bumeran watermark.
 """
 import logging
+import os
 import operator
 import time
 from collections import Counter
@@ -79,6 +80,7 @@ def source_bumeran(state: State) -> dict:
         jobs, last_id = bumeran.search(terms + bm.get("extra_terms", []), Prefilter(state["config"]["prefilter"]),
                                        bm.get("max_jobs", 25), ctx.bumeran_last_id if ctx else 0,
                                        bm.get("companies", []))
+        jobs = bumeran.enrich(jobs, os.environ.get("EXA_API_KEY"))
         return {"raw": jobs, "stats": {"bumeran_last_id": last_id}}
     except Exception as e:  # a blocked or failed download must not sink the other sources
         log.warning("[bumeran] %s", e)

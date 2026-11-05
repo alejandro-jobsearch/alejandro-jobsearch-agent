@@ -1,3 +1,5 @@
+from datetime import date
+
 from jobagent import ats, scoring
 from jobagent.models import Job, ScoredJob
 from jobagent.prefilter import Prefilter
@@ -327,6 +329,63 @@ def test_title_only_postings_skip_scoring_and_go_to_triage():
     sends = graph.fan_out({"candidates": [bum, li], "options": {}, "config": {}, "ctx": None})
     assert [s.arg["item"].job.source for s in sends if s.node == "score_one"] == ["linkedin"]
     assert [i.band for i in sends[-1].arg["items"]] == ["triage"]
+
+
+BUMERAN_TEXT = """Jefe de TI Mina - noviembre 2026 | Bumeran Perú
+
+# Jefe de TI Mina
+
+## Publicado hace 10 minutos
+
+## Lima, Lima, Peru
+
+### Descripción del puesto
+
+Liderar el área de tecnología de la organización, su presupuesto, el equipo y los proveedores, con foco en continuidad
+operativa, gobierno de TI y la implementación de la plataforma cloud corporativa.
+
+- Remoto
+- Tecnologia / Sistemas
+
+Publicado el 03/11/2026
+
+Ingresa tu sueldo bruto pretendido y calculamos un aproximado
+
+Empresa de 11 a 50 empleados"""
+
+
+def test_bumeran_details_reads_the_posting_and_drops_the_page_tail():
+    from jobagent.sources import bumeran
+
+    d = bumeran.details(BUMERAN_TEXT)
+    assert d["date_posted"] == date(2026, 11, 3) and d["location"] == "Lima, Lima, Peru" and d["remote"] is True
+    assert "gobierno de TI" in d["description"] and "empleados" not in d["description"]
+    assert bumeran.details("Just a moment... Enable JavaScript and cookies to continue") == {}
+    assert bumeran.details("### Descripción del puesto\n\ncorto") == {}
+
+
+def test_bumeran_enrich_keeps_title_only_what_the_index_lacks(monkeypatch):
+    import httpx
+    from jobagent.sources import bumeran
+
+    jobs = [Job(source="bumeran", company="", title=t, url=f"https://www.bumeran.com.pe/empleos/{t}-1.html",
+                description=bumeran.NO_DESCRIPTION) for t in ("a", "b")]
+    assert bumeran.enrich(jobs, None) is jobs and bumeran.enrich([], "key") == []
+
+    sent = {}
+    def post(url, headers, json, timeout):
+        sent.update(url=url, headers=headers, json=json)
+        return httpx.Response(200, json={"results": [{"url": jobs[0].url, "text": BUMERAN_TEXT}]},
+                              request=httpx.Request("POST", url))
+    monkeypatch.setattr(bumeran.httpx, "post", post)
+    got = bumeran.enrich(jobs, "key")
+    assert sent["headers"] == {"x-api-key": "key"} and sent["json"]["urls"] == [j.url for j in jobs]
+    assert "gobierno de TI" in got[0].description and got[1].description == bumeran.NO_DESCRIPTION
+
+    def down(*a, **k):
+        raise httpx.ConnectError("down")
+    monkeypatch.setattr(bumeran.httpx, "post", down)
+    assert bumeran.enrich(jobs, "key") is jobs
 
 
 def test_intake_link_prefills_the_bumeran_form():

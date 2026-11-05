@@ -8,9 +8,14 @@ sitemaps, which are plain files regenerated daily (~05:00 Lima). Each posting UR
 they go to the digest's triage list, and the full posting comes back through the manual intake form
 (`jobagent.intake`). Ids grow with each new posting, so a stored watermark keeps only those published since
 the last run.
+
+With `EXA_API_KEY` set, `enrich` asks the Exa search index for the text of those postings, and the ones it returns
+are scored like any other source. This never fetches the posting pages nor works around the challenge: no browser
+automation, no disguised client. Postings the index does not have stay title-only and go to the triage list.
 """
 import logging
 import re
+from datetime import datetime
 
 import httpx
 
@@ -57,6 +62,52 @@ def parse(xml: str, company_slugs: list[str]) -> list[Job]:
             source="bumeran", company=_spaced(company).title() if company else "", title=_spaced(title).capitalize(),
             location="Perú", url=f"{BASE}/empleos/{slug}-{aviso_id}.html", description=NO_DESCRIPTION)))
     return [j for _, j in sorted(out, key=lambda t: t[0], reverse=True)]
+
+
+EXA_CONTENTS = "https://api.exa.ai/contents"
+MAX_TEXT = 8000
+_DESCRIPTION = "Descripción del puesto"
+# the page goes on with the salary calculator and the company profile
+_END = re.compile(r"^.*(Ingresa tu sueldo|Actualizar sueldo|Este campo solo acepta).*$", re.M)
+_POSTED = re.compile(r"Publicado el (\d\d/\d\d/\d{4})")
+_PLACE = re.compile(r"^#+\s*(.+,\s*Per[uú])\s*$", re.M)
+_MODE = re.compile(r"^[-*\s]*(Remoto|Presencial)\s*$", re.M)
+
+
+def details(text: str) -> dict:
+    """Job fields from a posting's text, or {} when it is not one (a challenge or error page, a stub): same
+    150-character floor as the intake form."""
+    if _DESCRIPTION not in text:
+        return {}
+    body = text[:m.start()] if (m := _END.search(text)) else text
+    body = body.strip()
+    if len(body) < 150:
+        return {}
+    out: dict = {"description": body}
+    if m := _POSTED.search(body):
+        out["date_posted"] = datetime.strptime(m[1], "%d/%m/%Y").date()
+    if m := _PLACE.search(body):
+        out["location"] = m[1].strip()
+    if m := _MODE.search(body):
+        out["remote"] = m[1] == "Remoto"
+    return out
+
+
+def enrich(jobs: list[Job], api_key: str | None) -> list[Job]:
+    """Fill in the postings the Exa index has; the rest, or all of them if it fails, stay title-only."""
+    if not jobs or not api_key:
+        return jobs
+    try:
+        r = httpx.post(EXA_CONTENTS, headers={"x-api-key": api_key}, timeout=TIMEOUT,
+                       json={"urls": [j.url for j in jobs], "text": {"maxCharacters": MAX_TEXT}})
+        r.raise_for_status()
+        texts = {x.get("url"): x.get("text") or "" for x in r.json().get("results", [])}
+    except (httpx.HTTPError, ValueError) as e:
+        log.warning("[bumeran] Exa: %s", e)
+        return jobs
+    out = [j.model_copy(update=details(texts.get(j.url, ""))) for j in jobs]
+    log.info("[bumeran] Exa: %d of %d postings with description", sum(j.description != NO_DESCRIPTION for j in out), len(out))
+    return out
 
 
 STOPWORDS = {"de", "del", "la", "el", "los", "las", "y", "e", "en", "of", "and", "the", "a", "para", "con"}
