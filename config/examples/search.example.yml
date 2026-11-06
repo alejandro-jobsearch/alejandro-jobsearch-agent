@@ -33,6 +33,7 @@ prefilter:
     - '\b(head|director|gerente|subgerente|jefe|manager|lead|principal|architect|arquitect)'
   title_exclude:
     - '\b(junior|jr\.?|trainee|intern|practicante|analista|analyst|developer|desarrollador|qa|support|soporte)\b'
+  geo_block: []   # locations dropped even if geo_keep matches (mis-geocoded places)
   geo_keep:
     - 'peru|perú|lima'
     - 'latam|latin america|south america|americas'

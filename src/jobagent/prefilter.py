@@ -14,6 +14,7 @@ class Prefilter:
         self.exclude = _rx(cfg["title_exclude"])
         self.domain = _rx(cfg.get("title_domain"))
         self.geo_keep = _rx(cfg["geo_keep"])
+        self.geo_block = _rx(cfg.get("geo_block"))
         self.geo_drop = _rx(cfg.get("geo_drop"))
         self.geo_local = _rx(cfg.get("geo_local"))
         self.eligibility_drop = _rx(cfg.get("eligibility_drop"))
@@ -35,6 +36,8 @@ class Prefilter:
 
     def geo_ok(self, j: Job) -> bool:
         loc = j.location or ""
+        if self.geo_block and self.geo_block.search(loc):   # mis-geocoded places win over geo_keep
+            return False
         if self.geo_keep.search(loc):
             return True
         if self.geo_drop and self.geo_drop.search(loc):

@@ -549,3 +549,12 @@ def test_remote_search_isolates_a_failing_source(monkeypatch):
     monkeypatch.setattr(remote, "himalayas", lambda *a: [old, new])
     got = remote.search({"terms": ["a"], "sources": ["weworkremotely", "himalayas"]})
     assert [j.url for j in got] == ["v"]
+
+
+def test_geo_block_beats_geo_keep():
+    pf = Prefilter({"title_include": ["architect"], "title_exclude": ["junior"], "geo_keep": ["peru"], "geo_drop": ["."],
+                    "geo_block": [r"\busca\b"]})
+    def mk(loc):
+        return Job(source="x", company="c", title="AI Architect", url="u", location=loc)
+    assert not pf(mk("Usca, La Libertad, Peru"))    # LinkedIn's reading of the "USCA" region
+    assert pf(mk("Lima, Peru"))
