@@ -2,6 +2,7 @@
 
 START ─┬─ source_boards ──┬─ prefilter ─ unseen ─ company_check ─ mark_applied ─┬─ score_one ×N (Send) ─┬─ summarize ─ track ─ remember ─ END
        ├─ source_jobspy ──┤                                                   └─ passthrough ─────────┘
+       ├─ source_remote ──┤
        └─ source_bumeran ─┘
 
 `company_check` drops small/regional IT-services consultancies (LinkedIn company page). Bumeran postings carry
@@ -23,7 +24,7 @@ from langgraph.types import Send
 from jobagent import ats, linkedin, scoring
 from jobagent.models import Job, ScoredJob, _norm
 from jobagent.prefilter import Prefilter
-from jobagent.sources import boards, bumeran, jobspy_src
+from jobagent.sources import boards, bumeran, jobspy_src, remote
 from jobagent.state import Context
 
 log = logging.getLogger("jobagent")
@@ -68,6 +69,14 @@ def source_jobspy(state: State) -> dict:
                                      js["per_term"], js.get("sleep", 4.0))}
 
 
+def source_remote(state: State) -> dict:
+    """Public remote-job boards (`remote_boards` in config)."""
+    cfg = state["config"].get("remote_boards")
+    if not cfg or "remote" in state["options"].get("skip", []):
+        return {"raw": []}
+    return {"raw": remote.search(cfg)}
+
+
 def source_bumeran(state: State) -> dict:
     """Bumeran Perú (sitemap, title only), postings newer than the stored watermark. Terms default to
     `jobspy.terms`, plus `bumeran.extra_terms`."""
@@ -99,6 +108,8 @@ def prefilter(state: State) -> dict:
             why["company"] += 1
         elif not pf.geo_ok(j):
             why["geo"] += 1
+        elif not pf.eligible_ok(j):
+            why["eligibility"] += 1
         elif j.key in seen or j.url in seen:
             why["dup"] += 1
         else:
@@ -174,8 +185,7 @@ def score_one(task: ScoreTask) -> dict:
     except Exception as e:
         log.warning("score failed %s: %s", item.job.url, e)
         return {"scored": [item.model_copy(update={"error": f"{type(e).__name__}: {e}"[:300]})]}
-    capped = s.requires_operator_leadership or s.internal_bank_role
-    total = scoring.weighted(s.dims, cfg["weights"], capped, cfg["operator_cap"])
+    total = scoring.total(s, cfg)
     cov, missing = ats.coverage([k.model_dump() for k in s.keywords], ctx.cv[s.lang])
     return {"scored": [item.model_copy(update={"score": total, "band": scoring.band(total), "ats_before": cov,
                                                "ats_missing": missing, "llm": s.model_dump()})]}
@@ -235,15 +245,17 @@ def summarize(state: State) -> dict:
 def build():
     g = StateGraph(State)
     for name, fn in [("source_boards", source_boards), ("source_jobspy", source_jobspy),
-                     ("source_bumeran", source_bumeran), ("prefilter", prefilter),
+                     ("source_remote", source_remote), ("source_bumeran", source_bumeran),
+                     ("prefilter", prefilter),
                      ("unseen", unseen), ("company_check", company_check), ("mark_applied", mark_applied), ("score_one", score_one),
                      ("passthrough", passthrough), ("summarize", summarize), ("track", track),
                      ("remember", remember)]:
         g.add_node(name, fn)
     g.add_edge(START, "source_boards")
     g.add_edge(START, "source_jobspy")
+    g.add_edge(START, "source_remote")
     g.add_edge(START, "source_bumeran")
-    g.add_edge(["source_boards", "source_jobspy", "source_bumeran"], "prefilter")
+    g.add_edge(["source_boards", "source_jobspy", "source_remote", "source_bumeran"], "prefilter")
     g.add_edge("prefilter", "unseen")
     g.add_edge("unseen", "company_check")
     g.add_edge("company_check", "mark_applied")

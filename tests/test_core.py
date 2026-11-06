@@ -417,3 +417,135 @@ def test_source_bumeran_is_optional_and_never_raises(monkeypatch):
     monkeypatch.setattr(graph.bumeran, "search", boom)
     assert graph.source_bumeran({"config": cfg, "options": {}}) == {"raw": []}
     assert seen["terms"] == ["CTO", "IA"]
+
+
+def _score(**kw):
+    from jobagent.scoring import LLMScore
+
+    base = {"dims": {"industry": 30, "domain": 80}, "requires_operator_leadership": False, "lane": "D", "lang": "en",
+            "english_work": "yes", "seniority_real": "x", "gaps": [], "summary": "s", "keywords": []}
+    return LLMScore.model_validate({**base, **kw})
+
+
+def test_lane_weights_need_a_confirmed_open_remote_role():
+    cfg = {"weights": {"industry": 50, "domain": 50}, "operator_cap": 70,
+           "lane_weights": {"D": {"industry": 0, "domain": 100}}}
+    assert scoring.total(_score(remote_eligibility="peru_ok"), cfg) == 80
+    assert scoring.total(_score(remote_eligibility="latam"), cfg) == 80
+    assert scoring.total(_score(remote_eligibility="unclear"), cfg) == 55
+    assert scoring.total(_score(lane="A", remote_eligibility="peru_ok"), cfg) == 55
+    capped = _score(remote_eligibility="peru_ok", internal_bank_role=True, dims={"industry": 0, "domain": 100})
+    assert scoring.total(capped, cfg) == 70
+
+
+def test_restricted_remote_is_a_hard_exclusion():
+    s = scoring._apply_remote_rule(_score(remote_eligibility="restricted"))
+    assert s.hard_exclusion and s.exclusion_reason
+    assert not scoring._apply_remote_rule(_score(remote_eligibility="peru_ok")).hard_exclusion
+
+
+def test_prefilter_eligibility_only_outside_local_market():
+    pf = Prefilter({"title_include": ["architect"], "title_exclude": ["junior"], "geo_keep": ["peru", "worldwide"],
+                    "geo_drop": ["."], "geo_local": ["peru"],
+                    "eligibility_drop": [r"authorized to work in the (us|united states)"]})
+    text = "You must be authorized to work in the United States."
+    def mk(loc, desc):
+        return Job(source="x", company="c", title="AI Architect", url="u", location=loc, description=desc)
+    assert not pf(mk("Worldwide", text))
+    assert pf(mk("Worldwide", "Hire anywhere"))
+    assert pf(mk("Peru", text))          # published for Peru: the LLM decides
+
+
+def test_jobspy_location_can_search_a_subset_of_terms(monkeypatch):
+    import sys
+    import types
+
+    from jobagent.sources import jobspy_src
+
+    calls = []
+
+    class Empty:
+        def __len__(self):
+            return 0
+
+        def to_dict(self, _):
+            return []
+
+    def scrape(**kw):
+        calls.append((kw["search_term"], kw["location"]))
+        return Empty()
+
+    monkeypatch.setitem(sys.modules, "jobspy", types.SimpleNamespace(scrape_jobs=scrape))
+    monkeypatch.setattr(jobspy_src.time, "sleep", lambda _: None)
+    jobspy_src.search(["a", "b"], [{"name": "Lima"}, {"name": "Peru", "remote": True, "terms": ["b"]}],
+                      ["linkedin"], 24, 5)
+    assert calls == [("a", "Lima"), ("b", "Lima"), ("b", "Peru")]
+
+
+class _Resp:
+    def __init__(self, payload=None, content=b""):
+        self.payload, self.content = payload, content
+
+    def raise_for_status(self):
+        pass
+
+    def json(self):
+        return self.payload
+
+
+def test_himalayas_drops_other_time_zones_and_dedupes(monkeypatch):
+    from jobagent.sources import remote
+
+    jobs = [{"title": "AI Architect", "companyName": "Acme", "guid": "g1", "locationRestrictions": [],
+             "timezoneRestrictions": [-5, -4], "description": "<p>Agents</p>", "pubDate": 1793000000,
+             "minSalary": 80000, "maxSalary": 90000, "currency": "USD"},
+            {"title": "AI Architect", "companyName": "Far", "guid": "g2", "locationRestrictions": ["Peru"],
+             "timezoneRestrictions": [8, 9], "description": "x", "pubDate": 1793000000}]
+    monkeypatch.setattr(remote.httpx, "get", lambda *a, **k: _Resp({"jobs": jobs}))
+    monkeypatch.setattr(remote.time, "sleep", lambda _: None)
+    got = remote.himalayas(["a", "b"], "Peru", -5)
+    assert [j.url for j in got] == ["g1"]
+    assert got[0].location == "Worldwide" and got[0].description == "Agents" and got[0].salary_max == 90000
+
+
+def test_weworkremotely_splits_company_and_title(monkeypatch):
+    from jobagent.sources import remote
+
+    rss = (b"<rss><channel><item><title>Acme: Head of AI</title><region>Anywhere in the World</region>"
+           b"<link>https://wwr/1</link><pubDate>Tue, 03 Nov 2026 10:00:00 +0000</pubDate>"
+           b"<description>&lt;p&gt;Lead&lt;/p&gt;</description></item></channel></rss>")
+    monkeypatch.setattr(remote.httpx, "get", lambda *a, **k: _Resp(content=rss))
+    j = remote.weworkremotely()[0]
+    assert (j.company, j.title, j.location, j.description) == ("Acme", "Head of AI", "Anywhere in the World", "Lead")
+    assert j.date_posted == date(2026, 11, 3)
+
+
+def test_getonboard_keeps_fully_remote_and_listed_country(monkeypatch):
+    from jobagent.sources import remote
+
+    def row(i, modality, countries):
+        return {"id": i, "links": {"public_url": f"https://gob/{i}"}, "attributes": {
+            "title": "Head of Data", "remote": True, "remote_modality": modality, "countries": countries,
+            "published_at": 1793000000, "functions": "<p>Lead</p>", "max_salary": 7000, "min_salary": 6000,
+            "company": {"data": {"attributes": {"name": "Acme"}}}}}
+
+    data = [row("a", "fully_remote", ["Remote"]), row("b", "remote_local", ["Chile"]), row("c", "remote_local", ["Perú"])]
+    monkeypatch.setattr(remote.httpx, "get", lambda *a, **k: _Resp({"data": data}))
+    monkeypatch.setattr(remote.time, "sleep", lambda _: None)
+    got = remote.getonboard(["x"], "per[uú]")
+    assert [j.url for j in got] == ["https://gob/a", "https://gob/c"]
+    assert got[0].location == "Remote - Latin America" and got[0].salary_max == 7000 and got[0].currency == "USD"
+
+
+def test_remote_search_isolates_a_failing_source(monkeypatch):
+    from jobagent.sources import remote
+
+    def boom():
+        raise RuntimeError("blocked")
+
+    old = Job(source="x", company="c", title="t", url="u", date_posted=date(2020, 1, 1))
+    new = Job(source="x", company="c", title="t", url="v", date_posted=date.today())
+    monkeypatch.setattr(remote, "weworkremotely", boom)
+    monkeypatch.setattr(remote, "himalayas", lambda *a: [old, new])
+    got = remote.search({"terms": ["a"], "sources": ["weworkremotely", "himalayas"]})
+    assert [j.url for j in got] == ["v"]

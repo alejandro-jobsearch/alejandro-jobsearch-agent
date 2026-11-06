@@ -15,6 +15,8 @@ class Prefilter:
         self.domain = _rx(cfg.get("title_domain"))
         self.geo_keep = _rx(cfg["geo_keep"])
         self.geo_drop = _rx(cfg.get("geo_drop"))
+        self.geo_local = _rx(cfg.get("geo_local"))
+        self.eligibility_drop = _rx(cfg.get("eligibility_drop"))
         self.company_exclude = _rx(cfg.get("company_exclude"))
         self.job_types = {t.lower() for t in cfg.get("job_type_exclude", [])}
 
@@ -39,5 +41,13 @@ class Prefilter:
             return False
         return loc.strip() == ""
 
+    def eligible_ok(self, j: Job) -> bool:
+        """Remote postings from outside the local market that state they only hire elsewhere. Saves the LLM call;
+        the LLM's `remote_eligibility` catches what these patterns miss."""
+        if not self.eligibility_drop or (self.geo_local and self.geo_local.search(j.location or "")):
+            return True
+        return not self.eligibility_drop.search(f"{j.title}\n{j.location}\n{j.description}")
+
     def __call__(self, j: Job) -> bool:
-        return self.title_ok(j) and self.type_ok(j) and self.company_ok(j) and self.geo_ok(j)
+        return (self.title_ok(j) and self.type_ok(j) and self.company_ok(j) and self.geo_ok(j)
+                and self.eligible_ok(j))

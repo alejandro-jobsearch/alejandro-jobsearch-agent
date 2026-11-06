@@ -71,7 +71,7 @@ class Tracker:
     def labels(s: ScoredJob, watch: bool) -> list[str]:
         llm = s.llm or {}
         out = [f"band:{s.band}"] if s.band and s.band != "<60" else []
-        if llm.get("lane") in ("A", "B", "C"):
+        if llm.get("lane") in ("A", "B", "C", "D"):
             out.append(f"lane:{llm['lane']}")
         if llm.get("lang"):
             out.append(f"lang:{llm['lang']}")
@@ -82,6 +82,8 @@ class Tracker:
             out.append("watch")
         if llm.get("internal_bank_role"):
             out.append("solo-referido")
+        if llm.get("remote_eligibility") in ("peru_ok", "latam", "unclear"):
+            out.append(f"remoto:{llm['remote_eligibility']}")
         return out
 
     @staticmethod
@@ -97,7 +99,7 @@ class Tracker:
                      if llm.get("hard_exclusion") or llm.get("temporary") else "")
         return f"""**[{j.title}]({j.url})** — {j.company} · {j.location or 's/ubicación'} · fuente: {j.source} · publicada: {j.date_posted or '?'} · salario: {sal}
 
-**Score {s.score}** ({s.band}) · **ATS antes {s.ats_before}%** · lane {llm.get('lane', '–')} · inglés de trabajo: {llm.get('english_work', '–')} · nivel real: {llm.get('seniority_real', '–')}
+**Score {s.score}** ({s.band}) · **ATS antes {s.ats_before}%** · lane {llm.get('lane', '–')} · remoto: {llm.get('remote_eligibility', '–')} · inglés de trabajo: {llm.get('english_work', '–')} · nivel real: {llm.get('seniority_real', '–')}
 
 > {llm.get('summary', '')}
 {exclusion}

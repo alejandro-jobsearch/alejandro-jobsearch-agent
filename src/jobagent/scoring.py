@@ -11,6 +11,7 @@ from jobagent.models import Job
 log = logging.getLogger(__name__)
 
 DIMENSIONS = ("seniority", "domain", "industry", "operator_vendor", "geo", "compensation")
+OPEN_REMOTE = ("peru_ok", "latam")
 
 
 class Keyword(BaseModel):
@@ -23,7 +24,8 @@ class LLMScore(BaseModel):
     dims: dict[str, int] = Field(description="0-100 per dimension")
     requires_operator_leadership: bool
     internal_bank_role: bool = False    # owns a domain's technology INSIDE a bank/insurer (criteria §8)
-    lane: Literal["A", "B", "C", "none"]
+    lane: Literal["A", "B", "C", "D", "none"]
+    remote_eligibility: Literal["not_remote", "peru_ok", "latam", "unclear", "restricted"] = "not_remote"
     lang: Literal["en", "es"]
     english_work: Literal["yes", "no", "unspecified"]
     seniority_real: str
@@ -45,7 +47,8 @@ candidate's criteria document below. Be conservative: over-estimating fit is the
 Return ONLY a JSON object with exactly these keys:
 - "dims": object with integer 0-100 scores for {dims}
   (seniority = level fit; domain = AI/cloud/architecture/governance fit; industry; operator_vendor = apply the
-  anti-false-positive rule; geo = location/modality fit; compensation = 100 if >= floor or not published, 0 if below)
+  anti-false-positive rule; geo = location/modality fit; compensation = 100 if the top of the published range
+  meets the floor that applies (payroll or remote contractor), 60 if pay is not published, 0 if entirely below)
 - "requires_operator_leadership": true if the posting requires having LED technology INSIDE a financial institution
 - "internal_bank_role": true if the employer is a bank, insurer, caja or financial group (or a headhunter/staffing
   firm placing someone embedded in one) AND the role owns technology from the inside: a business domain's tech
@@ -53,11 +56,16 @@ Return ONLY a JSON object with exactly these keys:
   IT Team Leader, Product Owner/Tribe Lead, domain or technology architect, Subgerente/Jefe de TI). Vendor-side
   experience serving banks does not make a candidate competitive for these. false for roles at vendors,
   consultancies, hyperscalers or fintech product companies
-- "lane": "A" | "B" | "C" | "none" (lanes from the criteria)
+- "lane": "A" | "B" | "C" | "D" | "none" (lanes from the criteria)
+- "remote_eligibility": "not_remote" if on-site or hybrid; "peru_ok" if fully remote and open to Peru (Peru
+  named, or worldwide/anywhere); "latam" if fully remote for Latin America or the Americas; "restricted" if
+  remote but limited to other countries or regions (US only, work authorization elsewhere, EU/UK/APAC only,
+  time-zone overlap impossible from Peru); "unclear" if remote and the posting does not say who can apply
 - "lang": language the posting is written in, "en" or "es"
 - "english_work": "yes" | "no" | "unspecified" (English as day-to-day working language)
 - "temporary": true if the job is temporary or fixed-term (e.g. "temporal", "por X meses", "reemplazo",
-  "suplencia", "licencia", "por proyecto", interim/contract-to-end); false for permanent or not stated
+  "suplencia", "licencia", "por proyecto", interim/contract-to-end); false for permanent or not stated.
+  An open-ended contractor engagement is NOT temporary
 - "hard_exclusion": true if ANY hard exclusion listed in the criteria applies (e.g. a mandatory certification
   the candidate does not hold as current, a role centered on a technology or specialty the criteria exclude).
   Set it whenever your summary would conclude the posting must be discarded, regardless of the numeric scores
@@ -83,6 +91,14 @@ def _json_body(text: str) -> str:
     return text[start:end + 1] if start != -1 and end > start else text
 
 
+def _apply_remote_rule(s: LLMScore) -> LLMScore:
+    """A remote job the candidate cannot legally take is a hard exclusion, whatever its numeric scores."""
+    if s.remote_eligibility == "restricted" and not s.hard_exclusion:
+        s.hard_exclusion = True
+        s.exclusion_reason = s.exclusion_reason or "Remoto restringido a otra región"
+    return s
+
+
 def score(j: Job, criteria: str) -> LLMScore:
     msgs = [{"role": "system", "content": SYSTEM.format(criteria=criteria, dims=", ".join(DIMENSIONS))},
             {"role": "user", "content": _user(j)}]
@@ -91,7 +107,7 @@ def score(j: Job, criteria: str) -> LLMScore:
         r = client().chat.completions.create(model=model(), messages=msgs, max_tokens=6000,
                                              response_format={"type": "json_object"}, temperature=0.2)
         try:
-            return LLMScore.model_validate_json(_json_body(r.choices[0].message.content or ""))
+            return _apply_remote_rule(LLMScore.model_validate_json(_json_body(r.choices[0].message.content or "")))
         except ValidationError as e:
             last = e
             log.warning("invalid JSON for %s (attempt %d): %s", j.url, attempt + 1, e.errors()[:2])
@@ -101,6 +117,14 @@ def score(j: Job, criteria: str) -> LLMScore:
 def weighted(dims: dict[str, int], weights: dict[str, float], operator_cap: bool, cap: int) -> int:
     total = sum(weights[d] * dims.get(d, 0) for d in weights) / sum(weights.values())
     return round(min(total, cap) if operator_cap else total)
+
+
+def total(s: LLMScore, cfg: dict) -> int:
+    """Weighted score for a posting. `cfg.lane_weights` applies only when the role is confirmed open to the
+    candidate: an unclear remote role keeps the default weights."""
+    lane = cfg.get("lane_weights", {}).get(s.lane) if s.remote_eligibility in OPEN_REMOTE else None
+    return weighted(s.dims, lane or cfg["weights"], s.requires_operator_leadership or s.internal_bank_role,
+                    cfg["operator_cap"])
 
 
 def band(score: int) -> str:

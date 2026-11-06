@@ -149,3 +149,10 @@ No se ejecuta su código. Solo se usa como referencia de diseño.
 **2026-11-04 — Bumeran: descripción vía índice de búsqueda**
 - Con `EXA_API_KEY`, `bumeran.enrich` pide a Exa (`/contents`) el texto de los avisos nuevos y estos se puntúan como cualquier otra fuente. Los que el índice no tenga, o todos si Exa falla o no hay clave, siguen yendo al triage del digest.
 - Descartado Playwright: el contenido del aviso se carga con JavaScript tras el desafío de Cloudflare y pasarlo sería evadir la protección anti-bots. El motor no visita las páginas de aviso.
+
+**2026-11-05 — Remoto internacional**
+- Nuevo nodo `source_remote` (`sources/remote.py`), en paralelo con las demás fuentes: Himalayas (filtra por país y zona horaria), We Work Remotely (RSS) y Get on Board. Cada fuente falla sola. Remotive y RemoteOK se probaron y quedaron fuera por volumen o por falta de elegibilidad.
+- En JobSpy, una ubicación puede buscar un subconjunto de términos (`terms`), para sumar remoto sin alargar toda la corrida.
+- Elegibilidad en dos pasos: `eligibility_drop` en el prefiltro (sin LLM, solo fuera de `geo_local`) y `remote_eligibility` en el scoring. `restricted` es exclusión dura.
+- Carril D con `scoring.lane_weights`, aplicado solo si la elegibilidad está confirmada. `scoring.total` es ahora el único cálculo, usado por `graph` e `intake`.
+- Salario no publicado: compensación 60, no 100 (baja 2 puntos a esas vacantes). Un contractor sin fecha de fin ya no cuenta como temporal.

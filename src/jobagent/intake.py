@@ -113,9 +113,7 @@ def evaluate_issue(issue_number: int, data_dir: str, repo: str) -> str:
         llm.gaps = [llm.exclusion_reason, *llm.gaps][:6]
         llm.summary = f"Se descarta por antigüedad ({age_days} días desde su publicación). {llm.summary}"
 
-    dimensions = cfg["scoring"]["weights"]
-    capped = llm.requires_operator_leadership or llm.internal_bank_role
-    total = scoring.weighted(llm.dims, dimensions, capped, cfg["scoring"]["operator_cap"])
+    total = scoring.total(llm, cfg["scoring"])
     keywords = [k.model_dump() for k in llm.keywords]
     coverage, missing = ats.coverage(keywords, ctx.cv[llm.lang])
     result = ScoredJob(job=job, applied_match=same, company_history=company_history, score=total,

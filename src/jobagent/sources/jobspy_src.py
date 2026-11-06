@@ -25,6 +25,8 @@ def search(terms: list[str], locations: list[dict], sites: list[str], hours_old:
     jobs: list[Job] = []
     for term in terms:
         for loc in locations:
+            if "terms" in loc and term not in loc["terms"]:  # a location may search a subset of `terms`
+                continue
             try:
                 df = scrape_jobs(site_name=sites, search_term=term, location=loc["name"],
                                  is_remote=loc.get("remote", False), results_wanted=per_term,

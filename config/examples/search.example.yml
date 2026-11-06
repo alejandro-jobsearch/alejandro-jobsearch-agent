@@ -19,6 +19,15 @@ boards:
   - {provider: greenhouse, slug: anthropic, company: Anthropic}
   - {provider: ashby, slug: openai, company: OpenAI}
 
+# Optional: public remote boards. utc_offset drops Himalayas postings limited to other time zones.
+remote_boards:
+  sources: [himalayas, weworkremotely, getonboard]
+  country: Peru
+  country_pattern: 'per[uú]'
+  utc_offset: -5
+  max_age_days: 14
+  terms: [AI Architect, Head of AI]
+
 prefilter:
   title_include:
     - '\b(head|director|gerente|subgerente|jefe|manager|lead|principal|architect|arquitect)'
@@ -27,6 +36,9 @@ prefilter:
   geo_keep:
     - 'peru|perú|lima'
     - 'latam|latin america|south america|americas'
+  geo_local: ['peru|perú|lima', 'latam|latin america']   # eligibility_drop never applies to these locations
+  eligibility_drop:                                      # remote roles that only hire elsewhere
+    - 'authorized to work in the (u\.s\.|usa|united states|uk|eu)'
   job_type_exclude: [temporary, internship, parttime]   # JobSpy job_type
   company_exclude:                                       # company-name blocklist (regex)
     - 'some staffing firm'
