@@ -643,3 +643,30 @@ def test_exa_waits_for_its_interval(monkeypatch):
     assert graph.source_exa({**state, "ctx": ctx}) == {"raw": []} and not calls
     ctx.exa_last = (date.today() - timedelta(days=7)).isoformat()
     assert graph.source_exa({**state, "ctx": ctx})["stats"] == {"exa_ran": True} and calls
+
+
+def test_exa_apply_links():
+    from jobagent.sources.exa import apply_links
+    page = ('<a href="https://jobs.lever.co/acme/123-abc">Apply</a> <a href="https://jobs.lever.co/acme/123-abc">x</a>'
+            '<a href="https://acme.factorial.mx/apply/head-of-ai-1">y</a> <a href="https://acme.inhire.app/vagas/1">z</a>')
+    assert apply_links(page, "https://acme.com/careers/head") == [
+        "https://jobs.lever.co/acme/123-abc", "https://acme.factorial.mx/apply/head-of-ai-1"]
+    assert apply_links(page, "https://jobs.lever.co/acme/123-abc") == ["https://acme.factorial.mx/apply/head-of-ai-1"]
+
+
+def test_exa_is_closed_follows_apply_link(monkeypatch):
+    from jobagent import linkedin
+    from jobagent.sources import exa
+
+    class R:
+        def __init__(self, code, text="", url="https://acme.com/careers/head"):
+            self.status_code, self.text, self.url = code, text, url
+    monkeypatch.setattr(linkedin, "_get", lambda u: R(200, '<a href="https://jobs.lever.co/acme/1">Apply</a>'))
+    monkeypatch.setattr(linkedin, "is_closed", lambda u: True)
+    assert exa.is_closed("https://acme.com/careers/head") is True
+    monkeypatch.setattr(linkedin, "is_closed", lambda u: False)
+    assert exa.is_closed("https://acme.com/careers/head") is False
+    monkeypatch.setattr(linkedin, "_get", lambda u: R(404))
+    assert exa.is_closed("https://acme.com/careers/head") is True
+    monkeypatch.setattr(linkedin, "_get", lambda u: None)
+    assert exa.is_closed("https://acme.com/careers/head") is None

@@ -2,7 +2,8 @@
 on small boards. Results are web pages, not job records, so the title is split into role and company by pattern
 and the location stays blank: the scorer reads who can apply from the text (`remote_eligibility`).
 
-The index keeps pages after they die, so each result is checked with `linkedin.is_closed` before it counts.
+The index keeps pages after they die, so each result is checked with `is_closed` before it counts: the page
+itself, and the ATS apply links it carries (a careers page can outlive the posting it links to).
 """
 import logging
 import re
@@ -31,6 +32,37 @@ _POSTING = re.compile(r"requisit|requirement|qualification|responsabilidad|respo
 _NOT_POSTING = re.compile(r"/(posts?|pulse|in|blog|news|reviews?|salaries|salarios)/", re.I)
 _GENERIC = {"www", "careers", "career", "jobs", "job", "apply", "boards", "empleos", "trabajos"}
 _ATS_PATH = re.compile(r"(ashbyhq|lever|greenhouse)\.(com|co|io)$")
+# Apply links on a company's own careers page. Only ATSs that answer 404/410 for a removed posting: InHire,
+# Ashby and Teamtailor render their "not found" page client-side with HTTP 200, so a request can't tell.
+_APPLY = re.compile(r'https://(?:jobs\.lever\.co|(?:boards|job-boards)\.greenhouse\.io|[\w-]+\.factorial\.(?:mx|co|es|com)'
+                    r'|apply\.workable\.com)/[^"\'\s<>]+')
+
+
+def apply_links(page_html: str, page_url: str) -> list[str]:
+    """ATS apply links found in a careers page, excluding the page itself (at most 3)."""
+    seen: list[str] = []
+    for u in _APPLY.findall(page_html or ""):
+        u = u.rstrip(").,;")
+        if u.split("?")[0] != page_url.split("?")[0] and u not in seen:
+            seen.append(u)
+    return seen[:3]
+
+
+def is_closed(url: str) -> bool | None:
+    """The page is gone, or it links to an ATS posting that is gone (a careers page often stays up after the
+    posting closes). None = could not tell; never drop on a failed request."""
+    r = linkedin._get(url)
+    if r is None:
+        return None
+    if r.status_code in (404, 410) or "error=true" in str(r.url):
+        return True
+    if r.status_code != 200:
+        return None
+    for link in apply_links(r.text, url):
+        if linkedin.is_closed(link):
+            log.info("[exa] apply link closed: %s → %s", url, link)
+            return True
+    return False
 
 
 def host_company(url: str) -> str:
@@ -92,7 +124,7 @@ def search(cfg: dict, api_key: str, keep=None, sleep: float = 0.5) -> list[Job]:
                 jobs[j.url] = j
     out = []
     for j in jobs.values():
-        if not linkedin.is_closed(j.url):
+        if not is_closed(j.url):
             out.append(j)
         time.sleep(sleep)
     log.info("[exa] %d postings, %d still open", len(jobs), len(out))
