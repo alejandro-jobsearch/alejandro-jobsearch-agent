@@ -25,6 +25,7 @@ MIN_TEXT = 300
 _PREFIX = re.compile(r"^\s*(\[[^\]]*\]\s*|remote\s+|hiring:?\s+)+", re.I)
 _SITE = re.compile(r"\s+[|·]\s+[^|·]*$")                    # "Head of AI at Acme | SomeBoard"
 _AT = re.compile(r"^(.+)\s+(?:at\s+|@\s*)([^@]+)$")         # greedy: the last "at" splits role from company
+_EN = re.compile(r"^(.+)\s+en\s+((?:[A-Z][\w&.-]*\s?){1,3})$")   # only trusted on a board's title, see split_title
 _DASH = re.compile(r"^(.+)\s+[-–—]\s+([^-–—]+)$")
 _POSTING = re.compile(r"requisit|requirement|qualification|responsabilidad|responsibilit|funciones|what you", re.I)
 _NOT_POSTING = re.compile(r"/(posts?|pulse|in|blog|news|reviews?|salaries|salarios)/", re.I)
@@ -44,10 +45,15 @@ def host_company(url: str) -> str:
 
 def split_title(raw: str, url: str) -> tuple[str, str]:
     """(role, company) from a page title. "Role at Company" wins; "Role - Company" only when the URL backs the
-    company, since the part after a dash is as often a place. Falls back on the URL."""
-    t = _SITE.sub("", _PREFIX.sub("", raw or "")).strip()
+    company, since the part after a dash is as often a place; Spanish "Rol en Empresa" only when the title also
+    names a board ("| SomeBoard") or the URL says "-at-", since "en" is usually part of the role. Falls back on
+    the URL."""
+    stripped = _PREFIX.sub("", raw or "")
+    t = _SITE.sub("", stripped).strip()
     if m := _AT.match(t):
         return m[1].strip(), re.split(r"\s+[-–—]\s+", m[2])[0].strip()
+    if (t != stripped.strip() or "-at-" in url) and (m := _EN.match(t)):
+        return m[1].strip(), m[2].strip()
     if (m := _DASH.match(t)) and m[2].strip().lower().replace(" ", "") in url.lower():
         return m[1].strip(), m[2].strip()
     return t, host_company(url)
@@ -75,6 +81,7 @@ def search(cfg: dict, api_key: str, keep=None, sleep: float = 0.5) -> list[Job]:
     for q in cfg["queries"]:
         r = httpx.post(SEARCH, headers={"x-api-key": api_key}, timeout=TIMEOUT,
                        json={"query": q, "numResults": cfg.get("num_results", 15), "type": "auto",
+                             "excludeDomains": cfg.get("exclude_domains", []),
                              "contents": {"text": {"maxCharacters": MAX_TEXT}}})
         r.raise_for_status()
         results = r.json().get("results", [])

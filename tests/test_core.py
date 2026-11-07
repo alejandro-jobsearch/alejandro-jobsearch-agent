@@ -610,6 +610,9 @@ def test_exa_split_title():
     assert split_title("Director de Datos - Medellín, Colombia", "https://careers.wtwco.com/jobs/x") == (
         "Director de Datos - Medellín, Colombia", "Wtwco")
     assert split_title("Senior Lead", "https://jobs.lever.co/acme-corp/1") == ("Senior Lead", "Acme Corp")
+    assert split_title("AI Governance Principal en Blackbaud | Remotos LATAM", u) == (
+        "AI Governance Principal", "Blackbaud")
+    assert split_title("Especialista en Gobierno", "https://careers.acme.com/1") == ("Especialista en Gobierno", "Acme")
 
 
 def test_exa_to_job_keeps_only_recent_postings():
