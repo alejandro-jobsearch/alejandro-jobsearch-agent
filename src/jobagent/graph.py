@@ -3,12 +3,14 @@
 START ─┬─ source_boards ──┬─ prefilter ─ unseen ─ company_check ─ mark_applied ─┬─ score_one ×N (Send) ─┬─ summarize ─ track ─ remember ─ END
        ├─ source_jobspy ──┤                                                   └─ passthrough ─────────┘
        ├─ source_remote ──┤
+       ├─ source_exa ─────┤
        └─ source_bumeran ─┘
 
 `company_check` drops small/regional IT-services consultancies (LinkedIn company page). Bumeran postings carry
 only a title, so they skip scoring (passthrough) and go to the digest's triage list, from where the manual
 intake form scores the full posting. `track` prunes board cards whose posting no longer accepts applications,
 then turns selected postings into GitHub Issues; `remember` persists what was seen and the Bumeran watermark.
+`source_exa` is a web search that only runs every `exa_search.every_days` days.
 """
 import logging
 import os
@@ -24,7 +26,7 @@ from langgraph.types import Send
 from jobagent import ats, linkedin, scoring
 from jobagent.models import Job, ScoredJob, _norm
 from jobagent.prefilter import Prefilter
-from jobagent.sources import boards, bumeran, jobspy_src, remote
+from jobagent.sources import boards, bumeran, exa, jobspy_src, remote
 from jobagent.state import Context
 
 log = logging.getLogger("jobagent")
@@ -77,6 +79,24 @@ def source_remote(state: State) -> dict:
     return {"raw": remote.search(cfg)}
 
 
+def source_exa(state: State) -> dict:
+    """Web search for postings that no board carries. Every `every_days` days: its date lives in state/exa.json."""
+    cfg = state["config"].get("exa_search")
+    key = os.environ.get("EXA_API_KEY")
+    if not cfg or not key or "exa" in state["options"].get("skip", []):
+        return {"raw": []}
+    ctx = state.get("ctx")
+    last = ctx.exa_last if ctx else None
+    if last and (date.today() - date.fromisoformat(last)).days < cfg.get("every_days", 7):
+        return {"raw": []}
+    try:
+        return {"raw": exa.search(cfg, key, Prefilter(state["config"]["prefilter"]).title_ok),
+                "stats": {"exa_ran": True}}
+    except Exception as e:  # a failed search must not sink the other sources; the next run retries it
+        log.warning("[exa] %s", e)
+        return {"raw": []}
+
+
 def source_bumeran(state: State) -> dict:
     """Bumeran Perú (sitemap, title only), postings newer than the stored watermark. Terms default to
     `jobspy.terms`, plus `bumeran.extra_terms`."""
@@ -98,7 +118,7 @@ def source_bumeran(state: State) -> dict:
 
 def prefilter(state: State) -> dict:
     pf = Prefilter(state["config"]["prefilter"])
-    seen, kept, why = set(), [], Counter()
+    seen, kept, why, rescued = set(), [], Counter(), 0
     for j in state["raw"]:
         if not pf.title_ok(j):
             why["title"] += 1
@@ -115,7 +135,9 @@ def prefilter(state: State) -> dict:
         else:
             seen |= {j.key, j.url}
             kept.append(j)
-    return {"jobs": kept, "stats": {"raw": len(state["raw"]), "prefiltered": len(kept), "dropped": dict(why)}}
+            rescued += pf.rescued(j) and not pf.geo_keep.search(j.location or "")
+    return {"jobs": kept, "stats": {"raw": len(state["raw"]), "prefiltered": len(kept), "dropped": dict(why),
+                                    "geo_rescued": rescued}}
 
 
 def unseen(state: State) -> dict:
@@ -233,6 +255,8 @@ def remember(state: State) -> dict:
                               date.today().isoformat())
         if last_id := state["stats"].get("bumeran_last_id"):
             state["ctx"].save_bumeran(last_id, date.today().isoformat())
+        if state["stats"].get("exa_ran"):
+            state["ctx"].save_exa(date.today().isoformat())
     return {}
 
 
@@ -245,7 +269,7 @@ def summarize(state: State) -> dict:
 def build():
     g = StateGraph(State)
     for name, fn in [("source_boards", source_boards), ("source_jobspy", source_jobspy),
-                     ("source_remote", source_remote), ("source_bumeran", source_bumeran),
+                     ("source_remote", source_remote), ("source_exa", source_exa), ("source_bumeran", source_bumeran),
                      ("prefilter", prefilter),
                      ("unseen", unseen), ("company_check", company_check), ("mark_applied", mark_applied), ("score_one", score_one),
                      ("passthrough", passthrough), ("summarize", summarize), ("track", track),
@@ -254,8 +278,9 @@ def build():
     g.add_edge(START, "source_boards")
     g.add_edge(START, "source_jobspy")
     g.add_edge(START, "source_remote")
+    g.add_edge(START, "source_exa")
     g.add_edge(START, "source_bumeran")
-    g.add_edge(["source_boards", "source_jobspy", "source_remote", "source_bumeran"], "prefilter")
+    g.add_edge(["source_boards", "source_jobspy", "source_remote", "source_exa", "source_bumeran"], "prefilter")
     g.add_edge("prefilter", "unseen")
     g.add_edge("unseen", "company_check")
     g.add_edge("company_check", "mark_applied")

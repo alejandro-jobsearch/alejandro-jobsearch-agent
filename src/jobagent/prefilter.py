@@ -16,6 +16,8 @@ class Prefilter:
         self.geo_keep = _rx(cfg["geo_keep"])
         self.geo_block = _rx(cfg.get("geo_block"))
         self.geo_drop = _rx(cfg.get("geo_drop"))
+        self.rescue_places = _rx(cfg.get("geo_rescue_places"))
+        self.rescue_text = _rx(cfg.get("geo_rescue_text"))
         self.geo_local = _rx(cfg.get("geo_local"))
         self.eligibility_drop = _rx(cfg.get("eligibility_drop"))
         self.company_exclude = _rx(cfg.get("company_exclude"))
@@ -34,11 +36,18 @@ class Prefilter:
     def company_ok(self, j: Job) -> bool:
         return not (self.company_exclude and self.company_exclude.search(j.company))
 
+    def rescued(self, j: Job) -> bool:
+        """Regional roles filed under one country whose text opens them to the region ("flexible location")."""
+        return bool(self.rescue_places and self.rescue_text and self.rescue_places.search(j.location or "")
+                    and self.rescue_text.search(j.description or ""))
+
     def geo_ok(self, j: Job) -> bool:
         loc = j.location or ""
         if self.geo_block and self.geo_block.search(loc):   # mis-geocoded places win over geo_keep
             return False
         if self.geo_keep.search(loc):
+            return True
+        if self.rescued(j):
             return True
         if self.geo_drop and self.geo_drop.search(loc):
             return False

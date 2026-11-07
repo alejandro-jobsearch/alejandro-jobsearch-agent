@@ -20,6 +20,7 @@ class Context:
     applied: list[dict]
     seen: set[str] = field(default_factory=set)
     bumeran_last_id: int = 0                # highest Bumeran posting id already looked at (state/bumeran.json)
+    exa_last: str | None = None             # date of the last web search (state/exa.json)
 
     @classmethod
     def load(cls, data_dir: str | Path) -> "Context":
@@ -32,6 +33,7 @@ class Context:
                     r = json.loads(line)
                     seen |= {r["key"], r["url"]}
         bumeran_file = d / "state" / "bumeran.json"
+        exa_file = d / "state" / "exa.json"
         return cls(
             data_dir=d,
             criteria=(d / "config" / "criteria.md").read_text(encoding="utf-8"),
@@ -40,6 +42,7 @@ class Context:
             seen=seen,
             bumeran_last_id=json.loads(bumeran_file.read_text(encoding="utf-8"))["last_id"]
             if bumeran_file.exists() else 0,
+            exa_last=json.loads(exa_file.read_text(encoding="utf-8"))["last"] if exa_file.exists() else None,
         )
 
     def is_seen(self, j: Job) -> bool:
@@ -48,7 +51,9 @@ class Context:
     def applied_match(self, j: Job) -> tuple[str | None, list[str]]:
         """Fuzzy match against the application history.
 
-        Returns (same role already applied, other roles applied at the same company)."""
+        Returns (same role already applied, other roles applied at the same company). A same-titled application
+        that failed does not block: the posting is new (seen postings never get here), so the search may have
+        been relaunched. It goes to the history, for the reader to judge."""
         company, title = _norm(j.company), _norm(j.title)
         same, others = None, []
         for a in self.applied:
@@ -56,7 +61,10 @@ class Context:
                 continue
             label = f'{a["company"]} — {a["role"]}' + (f' ({a["note"]})' if a.get("note") else "")
             if a["role"] and fuzz.token_sort_ratio(title, _norm(a["role"])) >= 80:
-                same = same or label
+                if FAILED.search(a.get("note") or ""):
+                    others.append(f"posible relanzamiento: {label}")
+                else:
+                    same = same or label
             else:
                 others.append(label)
         return same, others
@@ -78,6 +86,11 @@ class Context:
         with f.open("a", encoding="utf-8") as fh:
             for j in jobs:
                 fh.write(json.dumps({"key": j.key, "url": j.url, "seen": today}, ensure_ascii=False) + "\n")
+
+    def save_exa(self, today: str) -> None:
+        f = self.data_dir / "state" / "exa.json"
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(json.dumps({"last": today}) + "\n", encoding="utf-8")
 
     def save_bumeran(self, last_id: int, today: str) -> None:
         f = self.data_dir / "state" / "bumeran.json"

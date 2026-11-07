@@ -558,3 +558,85 @@ def test_geo_block_beats_geo_keep():
         return Job(source="x", company="c", title="AI Architect", url="u", location=loc)
     assert not pf(mk("Usca, La Libertad, Peru"))    # LinkedIn's reading of the "USCA" region
     assert pf(mk("Lima, Peru"))
+
+
+# --- regional roles, relaunched searches, web search ---------------------------------------------------------
+def _rescue_cfg():
+    return {"title_include": ["director"], "title_exclude": ["junior"], "geo_keep": ["peru"], "geo_drop": ["."],
+            "geo_block": [r"\busca\b"], "geo_rescue_places": ["colombia|mexico"],
+            "geo_rescue_text": ["ubicaci[oó]n flexible", r"remot[oa][^.\n]{0,60}latam"]}
+
+
+def test_regional_role_is_rescued_only_with_the_text_and_the_place():
+    pf = Prefilter(_rescue_cfg())
+    job = lambda loc, d: Job(source="linkedin", company="Acme", title="Director IA", location=loc, url="u", description=d)
+    assert pf.geo_ok(job("Medellín, Colombia", "Latinoamérica | Ubicación flexible en países de la región"))
+    assert pf.geo_ok(job("Mexico City, Mexico", "Trabajo remoto para todo LATAM"))
+    assert not pf.geo_ok(job("Medellín, Colombia", "Presencial en nuestra sede principal"))
+    assert not pf.geo_ok(job("Madrid, Spain", "Ubicación flexible"))
+
+
+def test_rescue_is_off_without_config():
+    cfg = {k: v for k, v in _rescue_cfg().items() if not k.startswith("geo_rescue")}
+    j = Job(source="linkedin", company="Acme", title="Director IA", location="Bogotá, Colombia", url="u",
+            description="Ubicación flexible")
+    assert not Prefilter(cfg).geo_ok(j)
+
+
+def _ctx(applied):
+    from pathlib import Path
+
+    from jobagent.state import Context
+    return Context(data_dir=Path("."), criteria="", cv={}, applied=applied)
+
+
+def test_failed_application_does_not_block_a_new_posting():
+    j = Job(source="linkedin", company="Acme", title="Head of AI", url="u")
+    same, others = _ctx([{"company": "Acme", "role": "Head of AI", "note": "SIN RESPUESTA, cerrada"}]).applied_match(j)
+    assert same is None and others[0].startswith("posible relanzamiento")
+    same, _ = _ctx([{"company": "Acme", "role": "Head of AI", "note": "POSTULADO 2026-11-01"}]).applied_match(j)
+    assert same
+
+
+def test_exa_split_title():
+    from jobagent.sources.exa import split_title
+    u = "https://www.remotefront.com/remote-jobs/x"
+    assert split_title("Remote Head of AI Platforms at Tenpo | RemoteFront", u) == ("Head of AI Platforms", "Tenpo")
+    assert split_title("[Hiring] Head of Artificial Intelligence @Casa Principal", u) == (
+        "Head of Artificial Intelligence", "Casa Principal")
+    assert split_title("AI Governance Lead at Keyrus - Colombia Remote", u) == ("AI Governance Lead", "Keyrus")
+    assert split_title("Jefe/a de Plataformas de IA - Tenpo", "https://tenpo.teamtailor.com/jobs/1") == (
+        "Jefe/a de Plataformas de IA", "Tenpo")
+    assert split_title("Director de Datos - Medellín, Colombia", "https://careers.wtwco.com/jobs/x") == (
+        "Director de Datos - Medellín, Colombia", "Wtwco")
+    assert split_title("Senior Lead", "https://jobs.lever.co/acme-corp/1") == ("Senior Lead", "Acme Corp")
+
+
+def test_exa_to_job_keeps_only_recent_postings():
+    from jobagent.sources.exa import to_job
+    text = "Requisitos: experiencia liderando equipos de datos e inteligencia artificial. " * 10
+    day = date(2026, 11, 6)
+    ok = {"url": "https://acme.com/jobs/1", "title": "Head of AI at Acme", "text": text,
+          "publishedDate": "2026-11-01T00:00:00Z"}
+    assert to_job(ok, day, 45, "q").company == "Acme"
+    assert to_job({**ok, "publishedDate": None}, day, 45, "q").date_posted is None
+    assert to_job({**ok, "publishedDate": "2026-08-01T00:00:00Z"}, day, 45, "q") is None
+    assert to_job({**ok, "url": "https://linkedin.com/posts/x"}, day, 45, "q") is None
+    assert to_job({**ok, "text": "Corto"}, day, 45, "q") is None
+    assert to_job({**ok, "text": "Noticia sobre el mercado. " * 30}, day, 45, "q") is None
+
+
+def test_exa_waits_for_its_interval(monkeypatch):
+    from datetime import timedelta
+
+    from jobagent import graph
+
+    calls = []
+    monkeypatch.setenv("EXA_API_KEY", "k")
+    monkeypatch.setattr(graph.exa, "search", lambda cfg, key, keep: calls.append(1) or [])
+    state = {"config": {"exa_search": {"every_days": 7, "queries": ["q"]}, "prefilter": _rescue_cfg()}, "options": {}}
+    ctx = _ctx([])
+    ctx.exa_last = (date.today() - timedelta(days=3)).isoformat()
+    assert graph.source_exa({**state, "ctx": ctx}) == {"raw": []} and not calls
+    ctx.exa_last = (date.today() - timedelta(days=7)).isoformat()
+    assert graph.source_exa({**state, "ctx": ctx})["stats"] == {"exa_ran": True} and calls

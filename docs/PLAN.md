@@ -147,6 +147,9 @@ No se ejecuta su código. Solo se usa como referencia de diseño.
 - Solo avisos con id mayor a `state/bumeran.json` (los ids son correlativos); `max_jobs: 25`. Reclutadoras frecuentes que no están en el sitemap de empresas (`RECRUITERS`, más `bumeran.companies`) se separan del título.
 
 **2026-11-04 — Bumeran: descripción vía índice de búsqueda**
+- Roles regionales (2026-11-06): `geo_rescue_places` + `geo_rescue_text` conservan avisos de otros países de la región cuyo texto los abre a toda la región; la estadística `geo_rescued` los cuenta.
+- Fuente `exa` (2026-11-06): búsqueda web cada `exa_search.every_days` días, con la fecha en `state/exa.json`. Los resultados son páginas: se separa rol y empresa por patrones, se descarta lo que no parece aviso y se verifica con `is_closed` que la página siga viva. Se omite con `--skip exa`.
+- Una postulación fallida con el mismo título ya no bloquea un aviso nuevo (`applied_match`): pasa al historial como "posible relanzamiento".
 - Con `EXA_API_KEY`, `bumeran.enrich` pide a Exa (`/contents`) el texto de los avisos nuevos y estos se puntúan como cualquier otra fuente. Los que el índice no tenga, o todos si Exa falla o no hay clave, siguen yendo al triage del digest.
 - Descartado Playwright: el contenido del aviso se carga con JavaScript tras el desafío de Cloudflare y pasarlo sería evadir la protección anti-bots. El motor no visita las páginas de aviso.
 
