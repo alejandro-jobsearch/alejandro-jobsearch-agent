@@ -214,8 +214,8 @@ def mark_applied(state: State) -> dict:
 
 
 def title_only(j: Job) -> bool:
-    """No description to judge it by (Bumeran sitemap): triage list, not scoring."""
-    return j.description == bumeran.NO_DESCRIPTION
+    """No description to judge it by (Bumeran sitemap, Michael Page blocked): triage list, not scoring."""
+    return j.description in (bumeran.NO_DESCRIPTION, boards.MP_NO_DESCRIPTION)
 
 
 def fan_out(state: State):

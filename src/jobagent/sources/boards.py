@@ -202,6 +202,7 @@ def amazon(slug: str, company: str, keep=None, limit: int = 100) -> list[Job]:
     return out
 
 
+MP_NO_DESCRIPTION = ("(Michael Page no deja leer el aviso desde el servidor del pipeline: solo se conoce el título. Ver el enlace.)")
 _LD = re.compile(r'<script type="application/ld\+json">(.*?)</script>', re.S)
 
 
@@ -212,7 +213,7 @@ def michaelpage(slug: str, company: str, keep=None, sleep: float = 1.0) -> list[
     r = httpx.get(f"https://{slug}", timeout=TIMEOUT, follow_redirects=True)
     r.raise_for_status()
     out = []
-    for path in dict.fromkeys(re.findall(r'href="(/job-detail/[^"]+)"', r.text)):
+    for path in dict.fromkeys(html.unescape(p).split("?")[0] for p in re.findall(r'href="(/job-detail/[^"]+)"', r.text)):
         url = f"https://{host}{path}"
         title = urllib.parse.unquote(path.split("/")[2]).replace("-", " ")
         if keep and not keep(Job(source="michaelpage", company=company, title=title, url=url)):
@@ -222,6 +223,13 @@ def michaelpage(slug: str, company: str, keep=None, sleep: float = 1.0) -> list[
             page.raise_for_status()
             d = next(x for x in (json.loads(m, strict=False) for m in _LD.findall(page.text))
                      if x.get("@type") == "JobPosting")
+        except httpx.HTTPStatusError as e:
+            # posting pages answer 403 to datacenter IPs (GitHub Actions) while the list loads: keep the title for
+            # the digest's triage list instead of losing the posting. No retry with another client (§ anti-bot).
+            log.warning("[michaelpage] %s: %s", url, e.response.status_code)
+            out.append(Job(source="michaelpage", company=company, title=title.capitalize(), location="Perú", url=url,
+                           description=MP_NO_DESCRIPTION))
+            continue
         except Exception as e:
             log.warning("[michaelpage] %s: %s", url, e)
             continue

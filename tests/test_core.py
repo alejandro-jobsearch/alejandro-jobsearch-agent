@@ -834,3 +834,22 @@ def test_jobicy_parses(monkeypatch):
     monkeypatch.setattr(remote.httpx, "get", lambda *a, **k: R())
     [j] = remote.jobicy()
     assert (j.title, j.location, j.description, str(j.date_posted)) == ("Head of AI & Data", "LATAM", "Lead", "2026-11-08")
+
+
+def test_michaelpage_blocked_detail_goes_to_triage(monkeypatch):
+    import httpx
+
+    from jobagent import graph
+    from jobagent.sources import boards
+
+    listing = '<a href="/job-detail/gerente-de-ti/ref/1?ng-src=x&amp;ng-jn=y">a</a>'
+
+    def get(url, **kw):
+        if "/jobs/" in url:
+            return _R(text=listing)
+        resp = httpx.Response(403, request=httpx.Request("GET", url))
+        raise httpx.HTTPStatusError("403", request=resp.request, response=resp)
+    monkeypatch.setattr(boards.httpx, "get", get)
+    [j] = boards.michaelpage("www.mp.pe/jobs/tecnologia", "Michael Page", sleep=0)
+    assert (j.title, j.url) == ("Gerente de ti", "https://www.mp.pe/job-detail/gerente-de-ti/ref/1")
+    assert graph.title_only(j)
