@@ -765,3 +765,24 @@ def test_exa_domain_queries_and_computrabajo_titles():
     j = to_job(r, day, 30, "q")
     assert (j.title, j.company, j.location) == ("Gerente de Tecnología en Lima", "Grupo Expro", "Miraflores, Perú")
     assert to_job({**r, "url": "https://pe.computrabajo.com/trabajo-de-gerente-de-tecnologia-en-lima"}, day, 30, "q") is None
+
+
+def test_exa_split_title_drops_every_board_segment():
+    from jobagent.sources.exa import split_title
+    assert split_title("Senior AI Solutions & Enterprise Architect en 10Pearls · Empleos remotos en LATAM · heyeco",
+                       "https://heyeco.app/jobs/1") == ("Senior AI Solutions & Enterprise Architect", "10Pearls")
+    assert split_title("AI Governance Lead – Remote Job at Keyrus Colombia | Find My Remote | Jobs",
+                       "https://findmyremote.ai/x") == ("AI Governance Lead", "Keyrus Colombia")
+
+
+def test_company_aliases_meet_the_history(tmp_path):
+    ctx = _ctx([{"company": "WTW", "role": "Director de Data Strategy e Inteligencia Artificial LATAM",
+                 "note": "DESCARTADA 2026-11-07"},
+                {"company": "phData", "role": "Applied AI Solutions Architect", "note": "DESCARTADA"}])
+    ctx.aliases = {"WTW": ["Willis Towers Watson"], "phData": ["Ph Data"]}
+    copy = Job(source="exa", company="윌리스타워스왓슨(Willis Towers Watson)", url="u",
+               title="Director de Data Strategy e Inteligencia Artificial LATAM")
+    assert ctx.applied_match(copy)[0].startswith("WTW")
+    assert ctx.applied_match(Job(source="exa", company="Ph Data in LATAM", url="u",
+                                 title="Applied AI solutions Architect"))[0].startswith("phData")
+    assert ctx.canon("Acme Data") == "acme data"

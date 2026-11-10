@@ -21,6 +21,17 @@ class Context:
     seen: set[str] = field(default_factory=set)
     bumeran_last_id: int = 0                # highest Bumeran posting id already looked at (state/bumeran.json)
     exa_last: str | None = None             # date of the last web search (state/exa.json)
+    aliases: dict[str, list[str]] = field(default_factory=dict)   # applied.yml company_aliases: name -> other names
+
+    def canon(self, company: str) -> str:
+        """Normalized company name, with known aliases mapped to one name: copies on aggregators or in other
+        languages ("윌리스타워스왓슨(Willis Towers Watson)", "Ph Data in LATAM") must still meet the history."""
+        c = _norm(company)
+        for name, others in self.aliases.items():
+            for alias in [name, *others]:
+                if re.search(rf"\b{re.escape(_norm(alias))}\b", c):
+                    return _norm(name)
+        return c
 
     @classmethod
     def load(cls, data_dir: str | Path) -> "Context":
@@ -34,11 +45,13 @@ class Context:
                     seen |= {r["key"], r["url"]}
         bumeran_file = d / "state" / "bumeran.json"
         exa_file = d / "state" / "exa.json"
+        history = yaml.safe_load((d / "config" / "applied.yml").read_text(encoding="utf-8"))
         return cls(
             data_dir=d,
             criteria=(d / "config" / "criteria.md").read_text(encoding="utf-8"),
             cv={lang: (d / "cv" / f"cv-{lang}.md").read_text(encoding="utf-8") for lang in ("en", "es")},
-            applied=yaml.safe_load((d / "config" / "applied.yml").read_text(encoding="utf-8"))["applied"],
+            applied=history["applied"],
+            aliases=history.get("company_aliases") or {},
             seen=seen,
             bumeran_last_id=json.loads(bumeran_file.read_text(encoding="utf-8"))["last_id"]
             if bumeran_file.exists() else 0,
@@ -54,10 +67,10 @@ class Context:
         Returns (same role already applied, other roles applied at the same company). A same-titled application
         that failed does not block: the posting is new (seen postings never get here), so the search may have
         been relaunched. It goes to the history, for the reader to judge."""
-        company, title = _norm(j.company), _norm(j.title)
+        company, title = self.canon(j.company), _norm(j.title)
         same, others = None, []
         for a in self.applied:
-            if fuzz.token_set_ratio(company, _norm(a["company"])) < 85:
+            if fuzz.token_set_ratio(company, self.canon(a["company"])) < 85:
                 continue
             label = f'{a["company"]} — {a["role"]}' + (f' ({a["note"]})' if a.get("note") else "")
             if a["role"] and fuzz.token_sort_ratio(title, _norm(a["role"])) >= 80:
@@ -73,11 +86,11 @@ class Context:
         """Why the company is paused: `after` or more past applications there closed with no answer or a
         rejection, and no referral listed for it. None when it is open. Company names must match closely
         (sort ratio, not set ratio): "Acme Capital" is not the "Acme" group."""
-        company = _norm(j.company)
-        if any(fuzz.token_sort_ratio(company, _norm(r)) >= 90 for r in referrals):
+        company = self.canon(j.company)
+        if any(fuzz.token_sort_ratio(company, self.canon(r)) >= 90 for r in referrals):
             return None
         failed = [a["role"] for a in self.applied
-                  if fuzz.token_sort_ratio(company, _norm(a["company"])) >= 90 and FAILED.search(a.get("note") or "")]
+                  if fuzz.token_sort_ratio(company, self.canon(a["company"])) >= 90 and FAILED.search(a.get("note") or "")]
         return f"{len(failed)} postulaciones sin éxito ({'; '.join(failed)}): solo con referido"             if len(failed) >= after else None
 
     def remember(self, jobs: list[Job], today: str) -> None:
