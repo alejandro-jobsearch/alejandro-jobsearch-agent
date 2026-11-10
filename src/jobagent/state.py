@@ -100,6 +100,26 @@ class Context:
             for j in jobs:
                 fh.write(json.dumps({"key": j.key, "url": j.url, "seen": today}, ensure_ascii=False) + "\n")
 
+    def found_boards(self) -> list[dict]:
+        """Boards added by `add_boards` (state/boards.json), read by `source_boards` next to the configured ones."""
+        f = self.data_dir / "state" / "boards.json"
+        return json.loads(f.read_text(encoding="utf-8")) if f.exists() else []
+
+    def add_boards(self, boards: list[dict], today: str) -> list[dict]:
+        """Keep boards not yet known (same provider + slug). Returns the new ones."""
+        f = self.data_dir / "state" / "boards.json"
+        known = self.found_boards()
+        keys = {(b["provider"], b["slug"].lower()) for b in known}
+        new = []
+        for b in boards:
+            if (b["provider"], b["slug"].lower()) not in keys:
+                keys.add((b["provider"], b["slug"].lower()))
+                new.append({**b, "found": today})
+        if new:
+            f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(json.dumps(known + new, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+        return new
+
     def save_exa(self, today: str) -> None:
         f = self.data_dir / "state" / "exa.json"
         f.parent.mkdir(parents=True, exist_ok=True)

@@ -49,12 +49,41 @@ class ScoreTask(TypedDict):
     ctx: Context
 
 
+def all_boards(config: dict, ctx: Context | None) -> list[dict]:
+    """Configured boards plus those discovered from good postings (state/boards.json), without duplicates."""
+    out, keys = [], set()
+    for b in list(config.get("boards", [])) + (ctx.found_boards() if ctx else []):
+        k = (b["provider"], b["slug"].lower())
+        if k not in keys:
+            keys.add(k)
+            out.append(b)
+    return out
+
+
+def discovered_boards(scored: list[ScoredJob], config: dict, ctx: Context) -> list[dict]:
+    """Boards behind postings that scored at least `tracker.watch_min` and are not configured yet: a good role on a
+    company's Greenhouse/Lever/Ashby/Workday says that company is worth reading every day."""
+    floor = (config.get("tracker") or {}).get("watch_min", 60)
+    known = {(b["provider"], b["slug"].lower()) for b in all_boards(config, ctx)}
+    out = []
+    for s in scored:
+        if s.score is None or s.score < floor:
+            continue
+        b = boards.board_from_url(s.job.url) or boards.board_from_url(s.job.apply_url)
+        if b and (b["provider"], b["slug"].lower()) not in known:
+            known.add((b["provider"], b["slug"].lower()))
+            if b["provider"] == "workday":
+                b["country"] = (config.get("discovery") or {}).get("workday_country", "peru")
+            out.append({**b, "company": s.job.company, "from": s.job.url})
+    return out
+
+
 def source_boards(state: State) -> dict:
     if "boards" in state["options"].get("skip", []):
         return {"raw": []}
     out, keep = [], Prefilter(state["config"]["prefilter"]).title_ok
-    for b in state["config"].get("boards", []):
-        extra = {k: v for k, v in b.items() if k not in ("provider", "slug", "company")}
+    for b in all_boards(state["config"], state.get("ctx")):
+        extra = {k: v for k, v in b.items() if k not in ("provider", "slug", "company", "found", "from")}
         if b["provider"] in boards.FILTERED:
             extra["keep"] = keep
         try:
@@ -260,6 +289,11 @@ def remember(state: State) -> dict:
             state["ctx"].save_bumeran(last_id, date.today().isoformat())
         if state["stats"].get("exa_ran"):
             state["ctx"].save_exa(date.today().isoformat())
+        if (state["config"].get("discovery") or {}).get("enabled", True):
+            new = state["ctx"].add_boards(discovered_boards(state["scored"], state["config"], state["ctx"]),
+                                          date.today().isoformat())
+            for b in new:
+                log.info("board discovered: %s/%s (%s)", b["provider"], b["slug"], b["company"])
     return {}
 
 

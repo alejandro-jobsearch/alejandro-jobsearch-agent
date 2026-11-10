@@ -1,4 +1,4 @@
-"""Public remote-job sources (no auth): Himalayas, We Work Remotely, Get on Board.
+"""Public remote-job sources (no auth): Himalayas, We Work Remotely, Get on Board, Jobicy.
 
 They publish worldwide, so the first filter is who can apply. Himalayas and Get on Board expose that as data;
 We Work Remotely only as a region label. `Prefilter.eligible_ok` and the LLM's `remote_eligibility` do the rest.
@@ -94,12 +94,28 @@ def getonboard(terms: list[str], country: str, sleep: float = 1.0) -> list[Job]:
     return out
 
 
+def jobicy(geo: str = "latam", count: int = 50) -> list[Job]:
+    """Jobicy API, newest postings for a region. Its tag search matches loosely, so the prefilter picks by title."""
+    r = httpx.get("https://jobicy.com/api/v2/remote-jobs", headers=HEADERS, timeout=TIMEOUT,
+                  params={"count": count, "geo": geo})
+    r.raise_for_status()
+    out = []
+    for j in r.json().get("jobs", []):
+        when = (j.get("pubDate") or "")[:10]
+        out.append(Job(source="jobicy", company=html.unescape(j.get("companyName") or ""),
+                       title=html.unescape(j.get("jobTitle") or ""), location=j.get("jobGeo") or "",
+                       url=j.get("url") or "", description=_text(j.get("jobDescription") or ""), remote=True,
+                       date_posted=date.fromisoformat(when) if when else None))
+    return [j for j in out if j.url and j.title]
+
+
 def search(cfg: dict) -> list[Job]:
     """Each source fails alone. `cfg`: terms, country, utc_offset, max_age_days, sources."""
     terms, country = cfg["terms"], cfg.get("country", "Peru")
     calls = {"himalayas": lambda: himalayas(terms, country, cfg.get("utc_offset")),
              "weworkremotely": weworkremotely,
-             "getonboard": lambda: getonboard(terms, cfg.get("country_pattern", country))}
+             "getonboard": lambda: getonboard(terms, cfg.get("country_pattern", country)),
+             "jobicy": lambda: jobicy(cfg.get("jobicy_geo", "latam"))}
     out = []
     for name in cfg.get("sources", list(calls)):
         try:

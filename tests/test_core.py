@@ -792,3 +792,45 @@ def test_exa_apply_links_follow_teamtailor_from_a_copy():
     from jobagent.sources.exa import apply_links
     page = '<a href="https://knowmadmood.teamtailor.com/jobs/8437310-ai-architect-latam\\">Apply</a>'
     assert apply_links(page, "https://applypick.com/x") == ["https://knowmadmood.teamtailor.com/jobs/8437310-ai-architect-latam"]
+
+
+def test_board_from_url():
+    from jobagent.sources.boards import board_from_url
+    assert board_from_url("https://jobs.lever.co/acme-co/123-abc") == {"provider": "lever", "slug": "acme-co"}
+    assert board_from_url("https://job-boards.greenhouse.io/acme/jobs/1") == {"provider": "greenhouse", "slug": "acme"}
+    assert board_from_url("https://jobs.ashbyhq.com/acme/abc") == {"provider": "ashby", "slug": "acme"}
+    assert board_from_url("https://acme.wd3.myworkdayjobs.com/en-US/Ext/job/Lima/X_1") == {
+        "provider": "workday", "slug": "acme.wd3/Ext"}
+    assert board_from_url("https://job-boards.eu.greenhouse.io/finnapp/jobs/1") is None
+    assert board_from_url("https://www.linkedin.com/jobs/view/1") is None and board_from_url(None) is None
+
+
+def test_discovered_boards_from_good_postings_only(tmp_path):
+    from jobagent import graph
+    from jobagent.state import Context
+
+    ctx = Context(data_dir=tmp_path, criteria="", cv={}, applied=[])
+    cfg = {"boards": [{"provider": "lever", "slug": "known", "company": "Known"}], "tracker": {"watch_min": 60}}
+    mk = lambda url, score, apply=None: ScoredJob(job=Job(source="exa", company="Acme", title="Head of AI", url=url,
+                                                          apply_url=apply), score=score)
+    scored = [mk("https://jobs.lever.co/acme/1", 80), mk("https://jobs.lever.co/known/2", 90),
+              mk("https://jobs.lever.co/low/3", 40), mk("https://www.linkedin.com/jobs/view/9", 70,
+                                                         "https://acme2.wd5.myworkdayjobs.com/Careers/job/x")]
+    found = graph.discovered_boards(scored, cfg, ctx)
+    assert [(b["provider"], b["slug"]) for b in found] == [("lever", "acme"), ("workday", "acme2.wd5/Careers")]
+    assert found[1]["country"] == "peru"
+    assert len(ctx.add_boards(found, "2026-11-09")) == 2 and ctx.add_boards(found, "2026-11-10") == []
+    assert [b["slug"] for b in graph.all_boards(cfg, ctx)] == ["known", "acme", "acme2.wd5/Careers"]
+
+
+def test_jobicy_parses(monkeypatch):
+    from jobagent.sources import remote
+
+    class R:
+        def raise_for_status(self): pass
+        def json(self): return {"jobs": [{"jobTitle": "Head of AI &amp; Data", "companyName": "Acme", "jobGeo": "LATAM",
+                                          "url": "https://jobicy.com/jobs/1", "jobDescription": "<p>Lead</p>",
+                                          "pubDate": "2026-11-08 10:00:00"}]}
+    monkeypatch.setattr(remote.httpx, "get", lambda *a, **k: R())
+    [j] = remote.jobicy()
+    assert (j.title, j.location, j.description, str(j.date_posted)) == ("Head of AI & Data", "LATAM", "Lead", "2026-11-08")

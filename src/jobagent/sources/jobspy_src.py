@@ -45,6 +45,6 @@ def search(terms: list[str], locations: list[dict], sites: list[str], hours_old:
                     date_posted=r.get("date_posted"), remote=r.get("is_remote"),
                     salary_min=r.get("min_amount"), salary_max=r.get("max_amount"),
                     currency=r.get("currency"), search_term=term, job_type=r.get("job_type"),
-                    company_url=r.get("company_url")))
+                    company_url=r.get("company_url"), apply_url=r.get("job_url_direct")))
             time.sleep(sleep)
     return jobs

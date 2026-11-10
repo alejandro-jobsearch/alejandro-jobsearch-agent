@@ -25,6 +25,12 @@ boards:
   - {provider: amazon, slug: PER, company: Amazon}                                   # ISO-3 country code
   - {provider: michaelpage, slug: www.michaelpage.pe/jobs/tecnología, company: Michael Page}
 
+# Optional: add the board behind any posting that scores >= tracker.watch_min (Greenhouse, Lever, Ashby, Workday)
+# to state/boards.json, read every day next to `boards`.
+discovery:
+  enabled: true
+  workday_country: peru
+
 # Optional: web search through Exa (EXA_API_KEY) every `every_days` days. A query is a string, or {q, domains}
 # to search only those sites (exclude_domains then does not apply).
 exa_search:
@@ -39,7 +45,7 @@ exa_search:
 
 # Optional: public remote boards. utc_offset drops Himalayas postings limited to other time zones.
 remote_boards:
-  sources: [himalayas, weworkremotely, getonboard]
+  sources: [himalayas, weworkremotely, getonboard, jobicy]
   country: Peru
   country_pattern: 'per[uú]'
   utc_offset: -5

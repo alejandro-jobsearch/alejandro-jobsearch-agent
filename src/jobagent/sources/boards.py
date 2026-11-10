@@ -238,6 +238,25 @@ def michaelpage(slug: str, company: str, keep=None, sleep: float = 1.0) -> list[
 _EMPLOYMENT = {"FULL_TIME": "fulltime", "PART_TIME": "parttime", "TEMPORARY": "temporary", "CONTRACTOR": "contract",
                "INTERN": "internship"}
 
+_BOARD_URLS = [
+    ("greenhouse", re.compile(r"https?://(?:boards|job-boards)\.greenhouse\.io/(?:embed/job_app\?for=)?([\w-]+)")),
+    ("lever", re.compile(r"https?://jobs\.lever\.co/([\w-]+)")),
+    ("ashby", re.compile(r"https?://jobs\.ashbyhq\.com/([\w%.-]+)")),
+    ("workday", re.compile(r"https?://([\w-]+\.wd\d+)\.myworkdayjobs\.com/(?:[a-z]{2}-[A-Z]{2}/)?([\w-]+)/")),
+]
+
+
+def board_from_url(url: str | None) -> dict | None:
+    """The public board behind a posting URL, if it is one of the supported ATSs (EU Greenhouse is not)."""
+    for provider, rx in _BOARD_URLS:
+        if url and (m := rx.match(url)):
+            slug = f"{m[1]}/{m[2]}" if provider == "workday" else urllib.parse.unquote(m[1])
+            if slug.lower() in {"embed", "jobs", "job"}:
+                return None
+            return {"provider": provider, "slug": slug}
+    return None
+
+
 PROVIDERS = {"greenhouse": greenhouse, "lever": lever, "ashby": ashby, "hirehive": hirehive, "workday": workday,
              "successfactors": successfactors, "amazon": amazon, "michaelpage": michaelpage}
 # providers that read a list first and can skip fetching postings whose title the prefilter would drop

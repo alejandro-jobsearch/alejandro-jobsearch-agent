@@ -166,3 +166,7 @@ No se ejecuta su código. Solo se usa como referencia de diseño.
 - Exa: una consulta puede ser `{q, domains}` para buscar solo en esos sitios (`includeDomains`, y entonces no se aplica `exclude_domains`). Se usa para ATS chicos, Workday/SuccessFactors que no se pudieron configurar, Computrabajo, Torre, multilaterales y headhunters.
 - Computrabajo responde 403 a clientes automáticos y no se intenta evadir: solo se usa lo que Exa tiene indexado. De su título se sacan rol, empresa y distrito; sus páginas de listado se descartan.
 - Torre pide login en su API (401): solo vía Exa. Los nombres de sitio de Workday no se pueden deducir (422 con sitio equivocado, 406 en la raíz) y hubo que confirmarlos uno por uno.
+
+**2026-11-09 — Autodescubrimiento de boards y Jobicy**
+- `remember` agrega a `state/boards.json` el board de Greenhouse, Lever, Ashby o Workday detrás de cada vacante con score ≥ `tracker.watch_min` (URL del aviso o `apply_url`, que JobSpy trae como `job_url_direct`). `source_boards` lee esos boards junto a los de la config (`all_boards`). `discovery.enabled: false` lo apaga; Workday descubierto se filtra por `discovery.workday_country`.
+- Nueva fuente remota `jobicy` (API pública, `geo=latam`). Su búsqueda por etiqueta no filtra (devuelve lo mismo con cualquier tag), así que se leen los 50 más recientes y decide el prefiltro.
