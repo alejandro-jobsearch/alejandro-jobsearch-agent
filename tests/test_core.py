@@ -670,3 +670,98 @@ def test_exa_is_closed_follows_apply_link(monkeypatch):
     assert exa.is_closed("https://acme.com/careers/head") is True
     monkeypatch.setattr(linkedin, "_get", lambda u: None)
     assert exa.is_closed("https://acme.com/careers/head") is None
+
+
+class _R:
+    def __init__(self, d=None, content=b"", text=""):
+        self.d, self.content, self.text = d, content, text
+    def raise_for_status(self): pass
+    def json(self): return self.d
+
+
+def test_workday_country_facet_and_details_only_for_kept_titles(monkeypatch):
+    from jobagent.sources import boards
+
+    base = "https://acme.wd3.myworkdayjobs.com/wday/cxs/acme/Ext"
+    facets = [{"facetParameter": "locationMainGroup", "values": [
+        {"facetParameter": "locationCountry", "values": [{"id": "pe1", "descriptor": "Peru"},
+                                                         {"id": "us1", "descriptor": "United States"}]}]}]
+    posts, fetched = [], []
+
+    def post(url, json, **kw):
+        posts.append(json)
+        if json["limit"] == 1:
+            return _R({"facets": facets, "jobPostings": []})
+        return _R({"jobPostings": [{"title": "Head of AI", "externalPath": "/job/Lima/Head_1", "locationsText": "Lima"},
+                                   {"title": "Cajero", "externalPath": "/job/Lima/Cajero_2", "locationsText": "Lima"}]})
+
+    def get(url, **kw):
+        fetched.append(url)
+        return _R({"jobPostingInfo": {"location": "Lima", "additionalLocations": ["Remote"],
+                                      "country": {"descriptor": "Peru"}, "jobDescription": "<p>Lead AI</p>",
+                                      "startDate": "2026-11-05", "externalUrl": "https://x/Head_1",
+                                      "remoteType": "Hybrid"}})
+
+    monkeypatch.setattr(boards.httpx, "post", post)
+    monkeypatch.setattr(boards.httpx, "get", get)
+    [j] = boards.workday("acme.wd3/Ext", "Acme", country="peru", keep=lambda j: "Head" in j.title, sleep=0)
+    assert posts[1]["appliedFacets"] == {"locationCountry": ["pe1"]}
+    assert fetched == [base + "/job/Lima/Head_1"]
+    assert (j.location, j.description, str(j.date_posted), j.url) == (
+        "Lima, Remote, Peru", "Lead AI", "2026-11-05", "https://x/Head_1")
+
+    monkeypatch.setattr(boards.httpx, "post", lambda url, json, **kw: _R({"facets": [], "jobPostings": []}))
+    assert boards.workday("acme.wd3/Ext", "Acme", country="peru") == []
+
+
+def test_successfactors_ands_the_place_and_splits_it_from_the_title(monkeypatch):
+    from jobagent.sources import boards
+
+    seen = []
+    rss = (b"<rss><channel><item><title>Gerente de Datos (Lima, LIM, PE)</title>"
+           b"<link>https://jobs.acme.com/job/1/?feedId=null</link><description>&lt;p&gt;IA&lt;/p&gt;</description>"
+           b"<pubDate>Mon, 09 Nov 2026 0:00:00 GMT</pubDate></item></channel></rss>")
+    monkeypatch.setattr(boards.httpx, "get", lambda url, params, **kw: seen.append(params["keywords"]) or _R(content=rss))
+    [j] = boards.successfactors("jobs.acme.com", "Acme", search=["Gerente", "Datos"], place="LIM")
+    assert seen == ["(Gerente) AND (LIM)", "(Datos) AND (LIM)"]
+    assert (j.title, j.location, j.url, j.description, str(j.date_posted)) == (
+        "Gerente de Datos", "Lima, LIM, PE", "https://jobs.acme.com/job/1/", "IA", "2026-11-09")
+
+
+def test_amazon_and_michaelpage_parse(monkeypatch):
+    from jobagent.sources import boards
+
+    monkeypatch.setattr(boards.httpx, "get", lambda url, **kw: _R({"jobs": [{
+        "title": "Technical Account Manager", "company_name": "AWS", "normalized_location": "Lima, PE",
+        "job_path": "/en/jobs/1/tam", "posted_date": "September 21, 2026", "description": "<p>Lead</p>",
+        "basic_qualifications": "x", "preferred_qualifications": None}]}))
+    [a] = boards.amazon("PER", "Amazon")
+    assert (a.company, a.url, str(a.date_posted)) == ("AWS", "https://www.amazon.jobs/en/jobs/1/tam", "2026-09-21")
+
+    listing = '<a href="/job-detail/gerente-de-tecnolog%C3%ADa/ref/1">a</a><a href="/job-detail/cajero/ref/2">b</a>'
+    detail = ('<script type="application/ld+json">{"@type": "JobPosting", "title": "Gerente de Tecnología",'
+              '"datePosted": "2026-11-04", "employmentType": "FULL_TIME", "description": "<p>Roadmap</p>",'
+              '"jobLocation": {"address": {"addressLocality": "Lima", "addressCountry": "Perú"}}}</script>')
+    got = []
+    monkeypatch.setattr(boards.httpx, "get", lambda url, **kw: got.append(url) or _R(text=listing if "/jobs/" in url else detail))
+    [m] = boards.michaelpage("www.mp.pe/jobs/tecnologia", "Michael Page", keep=lambda j: "tecnolog" in j.title, sleep=0)
+    assert got[1:] == ["https://www.mp.pe/job-detail/gerente-de-tecnolog%C3%ADa/ref/1"]
+    assert (m.title, m.location, m.job_type, m.description) == ("Gerente de Tecnología", "Lima, Perú", "fulltime", "Roadmap")
+
+
+def test_exa_domain_queries_and_computrabajo_titles():
+    from jobagent.sources.exa import query_body, to_job
+
+    cfg = {"exclude_domains": ["junk.com"], "num_results": 5}
+    q, body = query_body("Head of AI", cfg)
+    assert q == "Head of AI" and body["excludeDomains"] == ["junk.com"] and "includeDomains" not in body
+    q, body = query_body({"q": "Gerente TI", "domains": ["pe.computrabajo.com"]}, cfg)
+    assert body["includeDomains"] == ["pe.computrabajo.com"] and "excludeDomains" not in body
+
+    text = "Funciones: liderar la estrategia de TI. Requerimientos: 8 años. " * 10
+    day = date(2026, 11, 9)
+    r = {"url": "https://pe.computrabajo.com/ofertas-de-trabajo/oferta-de-trabajo-de-gerente-de-ti-en-miraflores-ABC",
+         "title": "Empleo deGerente de Tecnología en Lima en Grupo Expro - Miraflores", "text": text}
+    j = to_job(r, day, 30, "q")
+    assert (j.title, j.company, j.location) == ("Gerente de Tecnología en Lima", "Grupo Expro", "Miraflores, Perú")
+    assert to_job({**r, "url": "https://pe.computrabajo.com/trabajo-de-gerente-de-tecnologia-en-lima"}, day, 30, "q") is None

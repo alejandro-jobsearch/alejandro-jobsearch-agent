@@ -14,10 +14,28 @@ jobspy:
     - AI Architect
     - Gerente de Tecnología
 
-# Public ATS boards (no auth). provider: greenhouse | lever | ashby
+# Public ATS boards (no auth). provider: greenhouse | lever | ashby | hirehive | workday | successfactors | amazon |
+# michaelpage. Extra keys are passed to the provider; workday, successfactors, amazon and michaelpage only fetch
+# postings whose title passes the prefilter.
 boards:
   - {provider: greenhouse, slug: anthropic, company: Anthropic}
   - {provider: ashby, slug: openai, company: OpenAI}
+  - {provider: workday, slug: acme.wd3/AcmeCareers, company: Acme, country: peru}   # tenant.wdN/site, country facet
+  - {provider: successfactors, slug: jobs.example.com, company: Example Bank, place: LIM, search: [Director, Head]}
+  - {provider: amazon, slug: PER, company: Amazon}                                   # ISO-3 country code
+  - {provider: michaelpage, slug: www.michaelpage.pe/jobs/tecnología, company: Michael Page}
+
+# Optional: web search through Exa (EXA_API_KEY) every `every_days` days. A query is a string, or {q, domains}
+# to search only those sites (exclude_domains then does not apply).
+exa_search:
+  every_days: 2
+  num_results: 15
+  max_age_days: 30
+  exclude_domains: [some-job-copier.com]
+  queries:
+    - Head of AI Latin America remote job opening
+    - q: Gerente de tecnología en Lima
+      domains: [pe.computrabajo.com]
 
 # Optional: public remote boards. utc_offset drops Himalayas postings limited to other time zones.
 remote_boards:

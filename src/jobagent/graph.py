@@ -52,10 +52,13 @@ class ScoreTask(TypedDict):
 def source_boards(state: State) -> dict:
     if "boards" in state["options"].get("skip", []):
         return {"raw": []}
-    out = []
+    out, keep = [], Prefilter(state["config"]["prefilter"]).title_ok
     for b in state["config"].get("boards", []):
+        extra = {k: v for k, v in b.items() if k not in ("provider", "slug", "company")}
+        if b["provider"] in boards.FILTERED:
+            extra["keep"] = keep
         try:
-            got = boards.PROVIDERS[b["provider"]](b["slug"], b["company"])
+            got = boards.PROVIDERS[b["provider"]](b["slug"], b["company"], **extra)
             log.info("[%s/%s] %d", b["provider"], b["slug"], len(got))
             out += got
         except Exception as e:

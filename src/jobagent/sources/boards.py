@@ -1,12 +1,20 @@
-"""Public ATS job-board APIs (no auth): Greenhouse, Lever, Ashby, HireHive."""
+"""Public job-board APIs and feeds (no auth): Greenhouse, Lever, Ashby, HireHive, Workday, SuccessFactors RSS,
+amazon.jobs and Michael Page."""
 import html
+import json
+import logging
 import re
+import time
+import urllib.parse
+import xml.etree.ElementTree as ET
 from datetime import date, datetime, timezone
+from email.utils import parsedate_to_datetime
 
 import httpx
 
 from jobagent.models import Job
 
+log = logging.getLogger(__name__)
 TIMEOUT = httpx.Timeout(30)
 
 
@@ -80,4 +88,157 @@ def hirehive(slug: str, company: str) -> list[Job]:
     return out
 
 
-PROVIDERS = {"greenhouse": greenhouse, "lever": lever, "ashby": ashby, "hirehive": hirehive}
+def _country_facets(facets: list[dict], pattern: str) -> dict[str, list[str]]:
+    """{facetParameter: [ids]} of the country facet values matching `pattern` (Workday nests them in groups)."""
+    out: dict[str, list[str]] = {}
+    for f in facets:
+        vals = f.get("values") or []
+        if re.search("country", f.get("facetParameter") or "", re.I):
+            ids = [v["id"] for v in vals if v.get("id") and re.search(pattern, v.get("descriptor") or "", re.I)]
+            if ids:
+                out.setdefault(f["facetParameter"], []).extend(ids)
+        for k, v in _country_facets([v for v in vals if "values" in v], pattern).items():
+            out.setdefault(k, []).extend(v)
+    return out
+
+
+def workday(slug: str, company: str, country: str | None = None, search: list[str] | None = None, keep=None,
+            max_per_search: int = 200, sleep: float = 0.5) -> list[Job]:
+    """Workday career site, `slug` = "tenant.wdN/site" (from the URL tenant.wdN.myworkdayjobs.com/en-US/site).
+    `country` (regex) picks the site's country facet: its full-text search also matches descriptions, so
+    "Peru" there brings postings from anywhere. No matching facet = the company is not hiring there now.
+    The list only has title and place, so the description is fetched only for postings `keep(job)` accepts."""
+    host, site = slug.split("/", 1)
+    tenant = host.split(".")[0]
+    base = f"https://{host}.myworkdayjobs.com/wday/cxs/{tenant}/{site}"
+    facets: dict[str, list[str]] = {}
+    if country:
+        r = httpx.post(f"{base}/jobs", json={"appliedFacets": {}, "limit": 1, "offset": 0, "searchText": ""},
+                       timeout=TIMEOUT)
+        r.raise_for_status()
+        facets = _country_facets(r.json().get("facets", []), country)
+        if not facets:
+            log.info("[workday/%s] no openings in %s", tenant, country)
+            return []
+    found: dict[str, dict] = {}
+    for text in search or [""]:
+        offset = 0
+        while offset < max_per_search:
+            r = httpx.post(f"{base}/jobs", json={"appliedFacets": facets, "limit": 20, "offset": offset,
+                                                  "searchText": text}, timeout=TIMEOUT)
+            r.raise_for_status()
+            page = r.json().get("jobPostings", [])
+            for p in page:
+                found.setdefault(p["externalPath"], p)
+            if len(page) < 20:
+                break
+            offset += 20
+    out = []
+    for path, p in found.items():
+        j = Job(source="workday", company=company, title=p.get("title", ""), location=p.get("locationsText", ""),
+                url=f"https://{host}.myworkdayjobs.com/{site}{path}")
+        if keep and not keep(j):
+            continue
+        try:
+            r = httpx.get(base + path, timeout=TIMEOUT)
+            r.raise_for_status()
+            d = r.json().get("jobPostingInfo", {})
+        except Exception as e:  # one broken posting must not sink the board
+            log.warning("[workday/%s] %s: %s", tenant, path, e)
+            continue
+        places = [d.get("location", "")] + list(d.get("additionalLocations") or [])
+        country = (d.get("country") or {}).get("descriptor", "")
+        out.append(j.model_copy(update={
+            "location": ", ".join(filter(None, places + [country])) or j.location,
+            "url": d.get("externalUrl") or j.url, "description": _text(d.get("jobDescription", "")),
+            "date_posted": _date(d.get("startDate")),
+            "remote": True if re.search(r"remot", d.get("remoteType") or "", re.I) else None}))
+        time.sleep(sleep)
+    return out
+
+
+_PLACE = re.compile(r"\s*\(([^()]*)\)\s*$")
+
+
+def successfactors(slug: str, company: str, search: list[str] | None = None, keep=None, locale: str = "es_ES",
+                   place: str | None = None) -> list[Job]:
+    """SAP SuccessFactors career site (jobs.scotiabank.com, jobs.iadb.org): its RSS feed per keyword, at most 20
+    postings each, newest first. `slug` is the host. The place comes at the end of the title, "Role (Lima, LIM,
+    PE)"; `place` ("LIM") is ANDed to each keyword, since the feed has no location parameter."""
+    found: dict[str, Job] = {}
+    for text in search or [""]:
+        keywords = f"({text}) AND ({place})" if place and text else (place or text)
+        r = httpx.get(f"https://{slug}/services/rss/job/", params={"locale": locale, "keywords": keywords},
+                      timeout=TIMEOUT, follow_redirects=True)
+        r.raise_for_status()
+        for it in ET.fromstring(r.content).iter("item"):
+            raw, link = it.findtext("title") or "", (it.findtext("link") or "").split("?")[0]
+            m = _PLACE.search(raw)
+            when = it.findtext("pubDate")
+            j = Job(source="successfactors", company=company, title=_PLACE.sub("", raw).strip(),
+                    location=m[1] if m else "", url=link, description=_text(it.findtext("description") or ""),
+                    date_posted=parsedate_to_datetime(when).date() if when else None, search_term=text or None)
+            if link and link not in found and (keep is None or keep(j)):
+                found[link] = j
+    return list(found.values())
+
+
+def amazon(slug: str, company: str, keep=None, limit: int = 100) -> list[Job]:
+    """amazon.jobs (AWS included). `slug` = ISO-3 country code, e.g. PER."""
+    r = httpx.get("https://www.amazon.jobs/en/search.json", timeout=TIMEOUT,
+                  headers={"Accept-Encoding": "identity"},   # its gzip stream breaks httpx's decoder
+                  params={"normalized_country_code[]": slug, "result_limit": limit, "sort": "recent"})
+    r.raise_for_status()
+    out = []
+    for j in r.json().get("jobs", []):
+        desc = "\n".join(_text(j.get(k) or "") for k in ("description", "basic_qualifications",
+                                                          "preferred_qualifications"))
+        job = Job(source="amazon", company=j.get("company_name") or company, title=j.get("title", ""),
+                  location=j.get("normalized_location") or j.get("location", ""),
+                  url="https://www.amazon.jobs" + j.get("job_path", ""), description=desc,
+                  date_posted=datetime.strptime(j["posted_date"], "%B %d, %Y").date() if j.get("posted_date") else None)
+        if keep is None or keep(job):
+            out.append(job)
+    return out
+
+
+_LD = re.compile(r'<script type="application/ld\+json">(.*?)</script>', re.S)
+
+
+def michaelpage(slug: str, company: str, keep=None, sleep: float = 1.0) -> list[Job]:
+    """Michael Page job list page (`slug` = host + path, e.g. www.michaelpage.pe/jobs/tecnología). Each posting
+    page carries a schema.org JobPosting; the client is confidential, so the company stays the recruiter."""
+    host = slug.split("/")[0]
+    r = httpx.get(f"https://{slug}", timeout=TIMEOUT, follow_redirects=True)
+    r.raise_for_status()
+    out = []
+    for path in dict.fromkeys(re.findall(r'href="(/job-detail/[^"]+)"', r.text)):
+        url = f"https://{host}{path}"
+        title = urllib.parse.unquote(path.split("/")[2]).replace("-", " ")
+        if keep and not keep(Job(source="michaelpage", company=company, title=title, url=url)):
+            continue
+        try:
+            page = httpx.get(url, timeout=TIMEOUT, follow_redirects=True)
+            page.raise_for_status()
+            d = next(x for x in (json.loads(m, strict=False) for m in _LD.findall(page.text))
+                     if x.get("@type") == "JobPosting")
+        except Exception as e:
+            log.warning("[michaelpage] %s: %s", url, e)
+            continue
+        addr = ((d.get("jobLocation") or {}).get("address") or {}) if isinstance(d.get("jobLocation"), dict) else {}
+        place = ", ".join(filter(None, [addr.get("addressLocality"), addr.get("addressRegion"),
+                                         addr.get("addressCountry")]))
+        out.append(Job(source="michaelpage", company=company, title=html.unescape(d.get("title") or title),
+                       location=place, url=url, description=_text(d.get("description", "")),
+                       date_posted=_date(d.get("datePosted")), job_type=_EMPLOYMENT.get(d.get("employmentType"))))
+        time.sleep(sleep)
+    return out
+
+
+_EMPLOYMENT = {"FULL_TIME": "fulltime", "PART_TIME": "parttime", "TEMPORARY": "temporary", "CONTRACTOR": "contract",
+               "INTERN": "internship"}
+
+PROVIDERS = {"greenhouse": greenhouse, "lever": lever, "ashby": ashby, "hirehive": hirehive, "workday": workday,
+             "successfactors": successfactors, "amazon": amazon, "michaelpage": michaelpage}
+# providers that read a list first and can skip fetching postings whose title the prefilter would drop
+FILTERED = {"workday", "successfactors", "amazon", "michaelpage"}

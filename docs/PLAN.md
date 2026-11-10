@@ -110,7 +110,7 @@ No se ejecuta su código. Solo se usa como referencia de diseño.
 - `graph.py`: grafo LangGraph con `source_boards` y `source_jobspy` en paralelo, que confluyen en `prefilter` (título + dominio + geografía + dedupe).
 - Prueba local con 7 días, 23 términos × 2 ubicaciones: **4,820 avisos → 68** (todos de Perú), sin ningún 429 de LinkedIn, en 19 min. Con el filtro de dominio, 68 → ~50.
 - Google (vía JobSpy) no devuelve datos, así que se quitó. Los boards de las empresas de IA no publican en Perú: sus roles LATAM son presenciales en MX/BR. Quedan 8 boards con presencia LATAM verificada.
-- Pendiente fase 1b: amazon.jobs (AWS Lima) y Workday (consultoras/Big4).
+- Fase 1b (amazon.jobs y Workday): hecha el 2026-11-09, ver abajo.
 
 **2026-10-08 — Fases 2–3 (memoria, historial, scoring)**
 - Nodos nuevos: `unseen` (state/seen.jsonl) → `mark_applied` (rapidfuzz contra applied.yml: mismo rol = no se puntúa; misma empresa = nota) → `score_one` ×N vía `Send` (en paralelo, `max_concurrency=6`) → `remember`.
@@ -159,3 +159,10 @@ No se ejecuta su código. Solo se usa como referencia de diseño.
 - Elegibilidad en dos pasos: `eligibility_drop` en el prefiltro (sin LLM, solo fuera de `geo_local`) y `remote_eligibility` en el scoring. `restricted` es exclusión dura.
 - Carril D con `scoring.lane_weights`, aplicado solo si la elegibilidad está confirmada. `scoring.total` es ahora el único cálculo, usado por `graph` e `intake`.
 - Salario no publicado: compensación 60, no 100 (baja 2 puntos a esas vacantes). Un contractor sin fecha de fin ya no cuenta como temporal.
+
+**2026-11-09 — Webs de empleo propias, Computrabajo, multilaterales y headhunters**
+- Nuevos proveedores en `sources/boards.py`: `workday` (API JSON `wday/cxs`; `country` aplica la faceta de país, porque la búsqueda de texto también busca en descripciones y trae avisos de cualquier país), `successfactors` (RSS de Career Site Builder, 20 avisos por palabra clave; `place` se agrega con AND), `amazon` (amazon.jobs por país ISO-3) y `michaelpage` (lista de un área y JSON-LD `JobPosting` de cada aviso).
+- Los cuatro leen primero una lista y solo descargan el detalle de los títulos que pasa el prefiltro (`boards.FILTERED`: `source_boards` les pasa `keep=Prefilter.title_ok`). Las claves extra de cada board en la config se pasan como argumentos.
+- Exa: una consulta puede ser `{q, domains}` para buscar solo en esos sitios (`includeDomains`, y entonces no se aplica `exclude_domains`). Se usa para ATS chicos, Workday/SuccessFactors que no se pudieron configurar, Computrabajo, Torre, multilaterales y headhunters.
+- Computrabajo responde 403 a clientes automáticos y no se intenta evadir: solo se usa lo que Exa tiene indexado. De su título se sacan rol, empresa y distrito; sus páginas de listado se descartan.
+- Torre pide login en su API (401): solo vía Exa. Los nombres de sitio de Workday no se pueden deducir (422 con sitio equivocado, 406 en la raíz) y hubo que confirmarlos uno por uno.
