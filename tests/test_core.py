@@ -786,3 +786,9 @@ def test_company_aliases_meet_the_history(tmp_path):
     assert ctx.applied_match(Job(source="exa", company="Ph Data in LATAM", url="u",
                                  title="Applied AI solutions Architect"))[0].startswith("phData")
     assert ctx.canon("Acme Data") == "acme data"
+
+
+def test_exa_apply_links_follow_teamtailor_from_a_copy():
+    from jobagent.sources.exa import apply_links
+    page = '<a href="https://knowmadmood.teamtailor.com/jobs/8437310-ai-architect-latam\\">Apply</a>'
+    assert apply_links(page, "https://applypick.com/x") == ["https://knowmadmood.teamtailor.com/jobs/8437310-ai-architect-latam"]

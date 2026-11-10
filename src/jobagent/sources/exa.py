@@ -38,10 +38,11 @@ _CT_TITLE = re.compile(r"^Empleo de\s*(.+) en (.+?) - ([^-]+)$")
 _CT_POSTING = re.compile(r"/ofertas-de-trabajo/oferta-de-trabajo-")
 _GENERIC = {"www", "careers", "career", "jobs", "job", "apply", "boards", "empleos", "trabajos"}
 _ATS_PATH = re.compile(r"(ashbyhq|lever|greenhouse)\.(com|co|io)$")
-# Apply links on a company's own careers page. Only ATSs that answer 404/410 for a removed posting: InHire,
-# Ashby and Teamtailor render their "not found" page client-side with HTTP 200, so a request can't tell.
+# Apply links on a company's own careers page or on an aggregator's copy. Only ATSs that answer 404/410 for a
+# removed posting: InHire and Ashby render their "not found" page client-side with HTTP 200, so a request can't
+# tell. Teamtailor answers 410 on its own domain (checked 2026-11-09, knowmad mood #87); custom domains not tested.
 _APPLY = re.compile(r'https://(?:jobs\.lever\.co|(?:boards|job-boards)\.greenhouse\.io|[\w-]+\.factorial\.(?:mx|co|es|com)'
-                    r'|apply\.workable\.com)/[^"\'\s<>]+')
+                    r'|apply\.workable\.com|[\w-]+(?:\.na)?\.teamtailor\.com)/[^"\'\s<>\\]+')
 
 
 def apply_links(page_html: str, page_url: str) -> list[str]:

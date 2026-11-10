@@ -15,6 +15,7 @@ from urllib.parse import urlencode
 import httpx
 
 from jobagent import linkedin
+from jobagent.sources import exa
 from jobagent.models import Job, ScoredJob, _norm
 
 log = logging.getLogger(__name__)
@@ -218,7 +219,8 @@ class Tracker:
         for it in self.items():
             if it["status"] not in statuses:
                 continue
-            closed = linkedin.is_closed(it["url"])
+            # LinkedIn has its own check; other pages may be copies (Exa), so their ATS apply links are followed too
+            closed = linkedin.is_closed(it["url"]) if "linkedin.com" in it["url"] else exa.is_closed(it["url"])
             time.sleep(sleep)
             if not closed:
                 continue
