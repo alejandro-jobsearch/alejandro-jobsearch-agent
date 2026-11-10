@@ -853,3 +853,18 @@ def test_michaelpage_blocked_detail_goes_to_triage(monkeypatch):
     [j] = boards.michaelpage("www.mp.pe/jobs/tecnologia", "Michael Page", sleep=0)
     assert (j.title, j.url) == ("Gerente de ti", "https://www.mp.pe/job-detail/gerente-de-ti/ref/1")
     assert graph.title_only(j)
+
+
+def test_teamtailor_residency_knockout(monkeypatch):
+    from jobagent import linkedin
+    from jobagent.sources import exa
+
+    class R:
+        status_code = 200
+        def __init__(self, text): self.text = text
+    form = '<span class="block">¿Resides en Chile?<sup data-asterisk="true">'
+    monkeypatch.setattr(linkedin, "_get", lambda u: R(form))
+    assert exa.residency_required("https://tenpo.teamtailor.com/jobs/8633038-jefe-ia") == "Chile"
+    monkeypatch.setattr(linkedin, "_get", lambda u: R("¿Resides en Perú?"))
+    assert exa.residency_required("https://acme.teamtailor.com/jobs/1-x") is None
+    assert exa.residency_required("https://jobs.lever.co/acme/1") is None

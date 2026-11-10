@@ -55,6 +55,23 @@ def apply_links(page_html: str, page_url: str) -> list[str]:
     return seen[:3]
 
 
+_TT_JOB = re.compile(r"(https://[\w.-]+\.teamtailor\.com/jobs/\d+[\w-]*)")
+_RESIDE = re.compile(r"¿\s*(?:resides|vives|resid[ií]s)\s+en\s+([A-ZÁÉÍÓÚ][\wáéíóúñ ]{2,30}?)\s*\?", re.I)
+
+
+def residency_required(url: str) -> str | None:
+    """The country a Teamtailor application form demands residence in, when it is not Peru. The posting can say
+    "Completamente remoto" while the form asks "¿Resides en Chile?" as a knockout (Tenpo #94, 2026-11-09)."""
+    m = _TT_JOB.match(url or "")
+    if not m:
+        return None
+    r = linkedin._get(m[1] + "/applications/new")
+    if r is None or r.status_code != 200:
+        return None
+    place = _RESIDE.search(r.text)
+    return place[1].strip() if place and not re.match(r"per[uú]", place[1].strip(), re.I) else None
+
+
 def is_closed(url: str) -> bool | None:
     """The page is gone, or it links to an ATS posting that is gone (a careers page often stays up after the
     posting closes). None = could not tell; never drop on a failed request."""
@@ -150,7 +167,10 @@ def search(cfg: dict, api_key: str, keep=None, sleep: float = 0.5) -> list[Job]:
     out = []
     for j in jobs.values():
         if not is_closed(j.url):
-            out.append(j)
+            if place := residency_required(j.url):
+                log.info("[exa] residency required (%s): %s", place, j.url)
+            else:
+                out.append(j)
         time.sleep(sleep)
     log.info("[exa] %d postings, %d still open", len(jobs), len(out))
     return out
