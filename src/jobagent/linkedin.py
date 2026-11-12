@@ -45,6 +45,19 @@ def _get(url: str) -> httpx.Response | None:
     return None
 
 
+# Where a board sends a request for a posting it removed: Computrabajo answers 301 to the search page
+# (/trabajo-de-arquitecto-en-lima#<id>), with no "no longer available" text to read (#111, #112, 2026-11-11).
+_LISTING = re.compile(r"^/(?:$|trabajo-de-|empleos?/?$|jobs?/?$|careers?/?$|vacantes/?$|search|buscar)", re.I)
+
+
+def redirected_away(r: httpx.Response, url: str) -> bool:
+    """The request for a posting was redirected to the site's home or a listing page."""
+    if not getattr(r, "history", None):
+        return False
+    asked, landed = httpx.URL(url).path, r.url.path
+    return asked.rstrip("/") != landed.rstrip("/") and asked.count("/") >= 2 and bool(_LISTING.match(landed))
+
+
 def is_closed(url: str) -> bool | None:
     """True = no longer accepting applications, False = open, None = could not tell."""
     if m := JOB_ID.search(url):
@@ -59,7 +72,7 @@ def is_closed(url: str) -> bool | None:
     r = _get(url)
     if r is None:
         return None
-    if r.status_code in (404, 410) or "error=true" in str(r.url):
+    if r.status_code in (404, 410) or "error=true" in str(r.url) or redirected_away(r, url):
         return True
     return dead_page(r.text) if r.status_code == 200 else None
 

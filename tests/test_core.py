@@ -924,3 +924,36 @@ def test_employer_in_names_history_company(tmp_path):
     assert ctx.employer_in("Arquitecto | TOKA\nphData América Latina (Remoto)") == "phData"
     assert ctx.employer_in("Partners: AWS, Snowflake") is None      # short names are skipped
     assert ctx.employer_in("Acme Corp busca arquitecto") is None
+
+
+def test_redirected_away_to_listing():
+    import httpx
+    from jobagent.linkedin import redirected_away
+    first = httpx.Response(301, request=httpx.Request("GET", "https://pe.computrabajo.com/ofertas-de-trabajo/oferta-de-trabajo-de-x-ABC"))
+    gone = httpx.Response(200, request=httpx.Request("GET", "https://pe.computrabajo.com/trabajo-de-arquitecto-en-lima#ABC"),
+                          history=[first])
+    assert redirected_away(gone, "https://pe.computrabajo.com/ofertas-de-trabajo/oferta-de-trabajo-de-x-ABC")
+    moved = httpx.Response(200, request=httpx.Request("GET", "https://acme.com/careers/head-of-ai-2"), history=[first])
+    assert not redirected_away(moved, "https://acme.com/careers/head-of-ai")      # moved posting, not a listing
+    direct = httpx.Response(200, request=httpx.Request("GET", "https://acme.com/jobs"))
+    assert not redirected_away(direct, "https://acme.com/jobs")                   # no redirect at all
+
+
+def test_exa_drops_free_host_clones():
+    from datetime import date
+    from jobagent.sources.exa import to_job
+    text = "Head of Responsible AI\nRequirements and responsibilities. " * 20
+    r = {"url": "https://jobseek.5f.unaux.com/job/2800682", "title": "Head of Responsible AI", "text": text}
+    assert to_job(r, date(2026, 11, 11), 30, "q") is None
+    r["url"] = "https://careers.acme.com/job/2800682"
+    assert to_job(r, date(2026, 11, 11), 30, "q") is not None
+
+
+def test_exa_apply_links_skip_teamtailor_non_job_pages():
+    from jobagent.sources.exa import apply_links
+    page = ('<a href="https://acme.teamtailor.com/jobs/123-head">x</a>'
+            '<a href="https://app.teamtailor.com/companies/x/dashboard">d</a>'
+            '<a href="https://acme.teamtailor.com/pages/cultura">p</a>'
+            '<a href="https://acme.applytojob.com/apply/AbC/Head">j</a>')
+    assert apply_links(page, "https://acme.com/c") == ["https://acme.teamtailor.com/jobs/123-head",
+                                                        "https://acme.applytojob.com/apply/AbC/Head"]

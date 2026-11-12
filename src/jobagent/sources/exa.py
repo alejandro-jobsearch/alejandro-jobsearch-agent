@@ -33,17 +33,26 @@ _DASH = re.compile(r"^(.+)\s+[-–—]\s+([^-–—]+)$")
 _POSTING = re.compile(r"requisit|requerimiento|requirement|qualification|responsabilidad|responsibilit|funciones|what you", re.I)
 _NOT_POSTING = re.compile(r"/(posts?|pulse|in|blog|news|reviews?|salaries|salarios)/", re.I)
 # Computrabajo: "Empleo deGerente de TI en Acme S.A.C. - Miraflores" (the space after "de" is lost); its list
-# pages (/trabajo-de-...) are not postings. The site blocks robots, so is_closed can't tell and keeps them.
+# pages (/trabajo-de-...) are not postings. A removed posting redirects to one of them: is_closed catches that.
 _CT_TITLE = re.compile(r"^Empleo de\s*(.+) en (.+?) - ([^-]+)$")
 _CT_POSTING = re.compile(r"/ofertas-de-trabajo/oferta-de-trabajo-")
+# Free web hosts (InfinityFree and similar) carry scraped job clones: they block robots behind a challenge, so a
+# dead posting can't be told apart, and they reuse ids for other jobs (jobseek.5f.unaux.com #107, 2026-11-11:
+# the id led to a customer service role; the Vertex posting it copied was filled months before).
+_JUNK_HOST = re.compile(r"(^|\.)(unaux\.com|liveblog365\.com|totalh\.net|22web\.org|rf\.gd|epizy\.com|"
+                        r"infinityfreeapp\.com|great-site\.net|wuaze\.com|kesug\.com|free\.nf|ct\.ws|"
+                        r"lovestoblog\.com|42web\.io|freecluster\.eu|byethost\d*\.com|000webhostapp\.com)$", re.I)
 _GENERIC = {"www", "careers", "career", "jobs", "job", "apply", "boards", "empleos", "trabajos"}
 _ATS_PATH = re.compile(r"(ashbyhq|lever|greenhouse)\.(com|co|io)$")
 # Apply links on a company's own careers page or on an aggregator's copy. Only ATSs that answer 404/410 for a
 # removed posting: InHire and Ashby render their "not found" page client-side with HTTP 200, so a request can't
 # tell. Teamtailor answers 410 on its own domain (checked 2026-11-09, knowmad mood #87); custom domains not tested.
 # JazzHR (applytojob.com) answers 200 with a dead page, caught by `linkedin.dead_page` (#105, 2026-11-11).
-_APPLY = re.compile(r'https://(?:jobs\.lever\.co|(?:boards|job-boards)\.greenhouse\.io|[\w-]+\.factorial\.(?:mx|co|es|com)'
-                    r'|apply\.workable\.com|[\w-]+(?:\.na)?\.teamtailor\.com|[\w-]+\.applytojob\.com)/[^"\'\s<>\\]+')
+# Teamtailor and JazzHR only on posting paths: a careers page also links Teamtailor's /pages/, /dashboard and
+# /login, and a 404 on one of those closed a live posting (Keyrus, 2026-11-11).
+_APPLY = re.compile(r'https://(?:(?:jobs\.lever\.co|(?:boards|job-boards)\.greenhouse\.io|[\w-]+\.factorial\.(?:mx|co|es|com)'
+                    r'|apply\.workable\.com)/|(?!(?:app|tt|www)\.)[\w-]+(?:\.na)?\.teamtailor\.com/jobs/\d'
+                    r'|[\w-]+\.applytojob\.com/apply/)[^"\'\s<>\\]+')
 
 
 def apply_links(page_html: str, page_url: str) -> list[str]:
@@ -79,7 +88,7 @@ def is_closed(url: str) -> bool | None:
     r = linkedin._get(url)
     if r is None:
         return None
-    if r.status_code in (404, 410) or "error=true" in str(r.url):
+    if r.status_code in (404, 410) or "error=true" in str(r.url) or linkedin.redirected_away(r, url):
         return True
     if r.status_code != 200:
         return None
@@ -156,6 +165,8 @@ def to_job(r: dict, today: date, max_age_days: int, term: str) -> Job | None:
     """A Job from a search result, or None when the page is not a recent posting."""
     url, text = r.get("url") or "", (r.get("text") or "").strip()
     if not url or _NOT_POSTING.search(urlparse(url).path + "/") or len(text) < MIN_TEXT or not _POSTING.search(text):
+        return None
+    if _JUNK_HOST.search(urlparse(url).hostname or ""):
         return None
     dates = [d for d in (date.fromisoformat(r["publishedDate"][:10]) if r.get("publishedDate") else None,
                          text_posted(text, today)) if d]
