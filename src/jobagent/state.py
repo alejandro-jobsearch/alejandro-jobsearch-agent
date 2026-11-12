@@ -61,6 +61,17 @@ class Context:
     def is_seen(self, j: Job) -> bool:
         return j.key in self.seen or j.url in self.seen
 
+    def employer_in(self, text: str) -> str | None:
+        """A company from the application history named near the top of a page: an aggregator copy (Toka,
+        Remotery, brenxor) is filed under the aggregator's name, so it never met the history (phData #106, its
+        fourth copy). Names under 4 letters ("AWS") are skipped: partners are named in every consulting ad."""
+        head = _norm(text[:800])
+        names = {a["company"] for a in self.applied} | {n for k, v in self.aliases.items() for n in [k, *v]}
+        for n in sorted(names, key=len, reverse=True):
+            if len(_norm(n)) >= 4 and re.search(rf"\b{re.escape(_norm(n))}\b", head):
+                return n
+        return None
+
     def applied_match(self, j: Job) -> tuple[str | None, list[str]]:
         """Fuzzy match against the application history.
 

@@ -206,6 +206,10 @@ def mark_applied(state: State) -> dict:
     ctx, pause = state["ctx"], state["config"].get("company_pause") or {}
     items = []
     for j in state["jobs"]:
+        # web-search copies filed under the aggregator's name: use the employer the page names, if known
+        if j.source == "exa" and j.company == exa.host_company(j.url) and (real := ctx.employer_in(j.description)) \
+                and ctx.canon(real) != ctx.canon(j.company):
+            j = j.model_copy(update={"company": real})
         same, others = ctx.applied_match(j)
         paused = ctx.paused(j, pause.get("after", 2), pause.get("referrals", [])) if pause else None
         items.append(ScoredJob(job=j, applied_match=same, company_history=others, paused=paused))

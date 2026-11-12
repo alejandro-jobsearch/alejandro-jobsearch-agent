@@ -891,3 +891,36 @@ def test_exa_is_closed_on_soft_404(monkeypatch):
     monkeypatch.setattr(linkedin, "_get", lambda u: R())
     assert exa.is_closed(R.url) is True
     assert linkedin.is_closed(R.url) is True
+
+
+def test_exa_text_posted_dates():
+    from datetime import date
+    from jobagent.sources.exa import text_posted
+    today = date(2026, 11, 11)
+    assert text_posted("Salario no especificado\nPublicado 14 sept\n", today) == date(2026, 9, 14)
+    assert text_posted("Posted on Dec 20", today) == date(2025, 12, 20)          # year-less future = last year
+    assert text_posted("Fecha de publicación: 2026-10-01", today) == date(2026, 10, 1)
+    assert text_posted("Publicada el 3 de noviembre de 2026", today) == date(2026, 11, 3)
+    assert text_posted("Posted 3 weeks ago", today) == date(2026, 10, 21)
+    assert text_posted("Publicado hace 2 días", today) == date(2026, 11, 9)
+    assert text_posted("Requisitos: 5 años de experiencia", today) is None
+
+
+def test_exa_to_job_drops_old_copy_with_fresh_crawl_date():
+    from datetime import date
+    from jobagent.sources.exa import to_job
+    text = "Arquitecto de IA | TOKA\nphData América Latina (Remoto)\nPublicado 14 sept\n" + "Requisitos y responsabilidades. " * 20
+    r = {"url": "https://toka.lat/ar/x/arquitecto-123", "title": "Arquitecto de IA | TOKA",
+         "publishedDate": "2026-11-10T00:00:00Z", "text": text}
+    assert to_job(r, date(2026, 11, 11), 30, "q") is None
+    assert to_job(r, date(2026, 10, 1), 30, "q").date_posted == date(2026, 9, 14)
+
+
+def test_employer_in_names_history_company(tmp_path):
+    from jobagent.state import Context
+    ctx = Context(data_dir=tmp_path, criteria="", cv={}, aliases={"phData": ["Ph Data"]},
+                  applied=[{"company": "phData", "role": "Applied AI Solutions Architect"},
+                           {"company": "AWS", "role": "TAM"}])
+    assert ctx.employer_in("Arquitecto | TOKA\nphData América Latina (Remoto)") == "phData"
+    assert ctx.employer_in("Partners: AWS, Snowflake") is None      # short names are skipped
+    assert ctx.employer_in("Acme Corp busca arquitecto") is None

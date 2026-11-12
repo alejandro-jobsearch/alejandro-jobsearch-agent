@@ -119,16 +119,49 @@ def split_title(raw: str, url: str) -> tuple[str, str]:
     return t, host_company(url)
 
 
+_MONTHS = {"ene": 1, "jan": 1, "feb": 2, "mar": 3, "abr": 4, "apr": 4, "may": 5, "jun": 6, "jul": 7, "ago": 8,
+           "aug": 8, "sep": 9, "set": 9, "oct": 10, "nov": 11, "dic": 12, "dec": 12}
+_MON = r"(ene|jan|feb|mar|abr|apr|may|jun|jul|ago|aug|sep|set|oct|nov|dic|dec)[a-zé]*\.?"
+_POSTED = r"(?:publicad[oa]|fecha de publicaci[oó]n|posted(?: on)?|date posted|published)\s*(?:el\s*|on\s*)?:?\s*"
+_POSTED_DM = re.compile(_POSTED + r"(\d{1,2})\s+(?:de\s+)?" + _MON + r"(?:\s+(?:de\s+)?(\d{4}))?", re.I)
+_POSTED_MD = re.compile(_POSTED + _MON + r"\s+(\d{1,2})(?:,?\s+(\d{4}))?", re.I)
+_POSTED_ISO = re.compile(_POSTED + r"(\d{4})-(\d{2})-(\d{2})", re.I)
+_POSTED_AGO = re.compile(r"(?:publicad[oa]\s+)?hace\s+(\d+|un|una)\s+(d[ií]as?|semanas?|mes(?:es)?)"
+                         r"|(?:posted\s+)?(\d+|a|an|one)\s+(days?|weeks?|months?)\s+ago", re.I)
+
+
+def text_posted(text: str, today: date) -> date | None:
+    """The publication date an aggregator copy prints in its text ("Publicado 14 sept", "Posted on Sep 14",
+    "hace 3 semanas"). Exa's publishedDate is often the crawl date of the copy, not of the posting: Toka showed
+    phData's 2026-09-14 posting as new on 2026-11-11 (#106). A year-less date in the future is last year's."""
+    head = text[:3000]
+    try:
+        if m := _POSTED_ISO.search(head):
+            return date(int(m[1]), int(m[2]), int(m[3]))
+        for rx, day_i, mon_i in ((_POSTED_DM, 1, 2), (_POSTED_MD, 2, 1)):
+            if m := rx.search(head):
+                d = date(int(m[3]) if m[3] else today.year, _MONTHS[m[mon_i][:3].lower()], int(m[day_i]))
+                return d.replace(year=d.year - 1) if not m[3] and d > today else d
+        if m := _POSTED_AGO.search(head):
+            n, unit = (m[1], m[2]) if m[1] else (m[3], m[4])
+            n = 1 if n.lower() in ("un", "una", "a", "an", "one") else int(n)
+            days = {"d": 1, "s": 7, "w": 7, "m": 30}[unit[0].lower()]
+            return today - timedelta(days=n * days)
+    except (ValueError, KeyError):
+        return None
+    return None
+
+
 def to_job(r: dict, today: date, max_age_days: int, term: str) -> Job | None:
     """A Job from a search result, or None when the page is not a recent posting."""
     url, text = r.get("url") or "", (r.get("text") or "").strip()
     if not url or _NOT_POSTING.search(urlparse(url).path + "/") or len(text) < MIN_TEXT or not _POSTING.search(text):
         return None
-    posted = None
-    if r.get("publishedDate"):
-        posted = date.fromisoformat(r["publishedDate"][:10])
-        if posted < today - timedelta(days=max_age_days):
-            return None
+    dates = [d for d in (date.fromisoformat(r["publishedDate"][:10]) if r.get("publishedDate") else None,
+                         text_posted(text, today)) if d]
+    posted = min(dates) if dates else None
+    if posted and posted < today - timedelta(days=max_age_days):
+        return None
     location = ""
     if "computrabajo." in url:
         if not _CT_POSTING.search(url) or not (m := _CT_TITLE.match((r.get("title") or "").strip())):
