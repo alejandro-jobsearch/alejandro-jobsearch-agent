@@ -41,8 +41,9 @@ _ATS_PATH = re.compile(r"(ashbyhq|lever|greenhouse)\.(com|co|io)$")
 # Apply links on a company's own careers page or on an aggregator's copy. Only ATSs that answer 404/410 for a
 # removed posting: InHire and Ashby render their "not found" page client-side with HTTP 200, so a request can't
 # tell. Teamtailor answers 410 on its own domain (checked 2026-11-09, knowmad mood #87); custom domains not tested.
+# JazzHR (applytojob.com) answers 200 with a dead page, caught by `linkedin.dead_page` (#105, 2026-11-11).
 _APPLY = re.compile(r'https://(?:jobs\.lever\.co|(?:boards|job-boards)\.greenhouse\.io|[\w-]+\.factorial\.(?:mx|co|es|com)'
-                    r'|apply\.workable\.com|[\w-]+(?:\.na)?\.teamtailor\.com)/[^"\'\s<>\\]+')
+                    r'|apply\.workable\.com|[\w-]+(?:\.na)?\.teamtailor\.com|[\w-]+\.applytojob\.com)/[^"\'\s<>\\]+')
 
 
 def apply_links(page_html: str, page_url: str) -> list[str]:
@@ -82,6 +83,9 @@ def is_closed(url: str) -> bool | None:
         return True
     if r.status_code != 200:
         return None
+    if linkedin.dead_page(r.text):
+        log.info("[exa] page says the posting is gone: %s", url)
+        return True
     for link in apply_links(r.text, url):
         if linkedin.is_closed(link):
             log.info("[exa] apply link closed: %s → %s", url, link)

@@ -868,3 +868,26 @@ def test_teamtailor_residency_knockout(monkeypatch):
     monkeypatch.setattr(linkedin, "_get", lambda u: R("¿Resides en Perú?"))
     assert exa.residency_required("https://acme.teamtailor.com/jobs/1-x") is None
     assert exa.residency_required("https://jobs.lever.co/acme/1") is None
+
+
+def test_dead_page_soft_404():
+    from jobagent.linkedin import dead_page
+    jazz = "<html><head><title>JazzHR - Inactive Career Page</title><script>x</script></head><body>This account is no longer active.</body></html>"
+    assert dead_page(jazz)
+    assert dead_page("<title>Careers</title><body><h1>Esta oferta ya no está disponible</h1></body>")
+    live = "<title>Head of AI - Acme</title><body><h1>Head of AI</h1>" + "Requirements " * 100 + \
+           "Note: once the position has been filled we close the page.</body>"
+    assert not dead_page(live)
+    assert not dead_page("")
+
+
+def test_exa_is_closed_on_soft_404(monkeypatch):
+    from jobagent import linkedin
+    from jobagent.sources import exa
+
+    class R:
+        status_code, url = 200, "https://acme.applytojob.com/apply/x/Head"
+        text = "<title>JazzHR - Inactive Career Page</title>"
+    monkeypatch.setattr(linkedin, "_get", lambda u: R())
+    assert exa.is_closed(R.url) is True
+    assert linkedin.is_closed(R.url) is True

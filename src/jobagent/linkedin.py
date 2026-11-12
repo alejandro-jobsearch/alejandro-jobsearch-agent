@@ -1,7 +1,8 @@
 """LinkedIn guest pages (no login): is a posting still open, and how big/where is the company.
 
 Also a generic `is_closed` for ATS URLs (Greenhouse/Lever answer 404 or redirect with ?error=true once a
-posting is taken down). Any network error means "unknown" (None): never close or drop on a failed request.
+posting is taken down; others answer 200 with a "no longer available" page, see `dead_page`). Any network error
+means "unknown" (None): never close or drop on a failed request.
 """
 import html
 import logging
@@ -13,6 +14,22 @@ import httpx
 log = logging.getLogger(__name__)
 UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126 Safari/537.36"}
 JOB_ID = re.compile(r"linkedin\.com/jobs/view/(?:[^/?]*-)?(\d+)")
+# Pages that answer HTTP 200 for a posting that is gone ("soft 404"). Matched against the <title> and the first
+# visible text only, so boilerplate further down a live posting can't trigger it. JazzHR serves "Inactive Career
+# Page" for every URL of a lapsed account (Pacifica Continental #105, 2026-11-11).
+_DEAD = re.compile(r"inactive career page|account is no longer active|(job|position|posting|vacancy|opening|role)"
+                   r" (is )?no longer (available|open|active|accepting)|no longer accepting applications"
+                   r"|(job|posting|position) (has )?(expired|been filled|been closed)|page (was )?not found"
+                   r"|(oferta|vacante|aviso|puesto|convocatoria) (ya )?no (está|se encuentra) (disponible|activ[ao]|vigente)"
+                   r"|(oferta|vacante|aviso|convocatoria) (ha )?(expirad[ao]|finalizad[ao]|cerrad[ao])", re.I)
+
+
+def dead_page(text: str) -> bool:
+    """A 200 page that says the posting (or the whole careers site) is gone."""
+    title = re.search(r"<title[^>]*>(.*?)</title>", text or "", re.S | re.I)
+    body = re.sub(r"<(script|style)\b.*?</\1>", " ", text or "", flags=re.S | re.I)
+    body = re.sub(r"<[^>]+>|\s+", " ", html.unescape(re.sub(r"<head\b.*?</head>", " ", body, flags=re.S | re.I)))
+    return bool(_DEAD.search(title[1] if title else "") or _DEAD.search(body[:600]))
 
 
 def _get(url: str) -> httpx.Response | None:
@@ -44,7 +61,7 @@ def is_closed(url: str) -> bool | None:
         return None
     if r.status_code in (404, 410) or "error=true" in str(r.url):
         return True
-    return False if r.status_code == 200 else None
+    return dead_page(r.text) if r.status_code == 200 else None
 
 
 def _dd(text: str, test_id: str) -> str | None:
