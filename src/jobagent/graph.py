@@ -100,7 +100,8 @@ def source_jobspy(state: State) -> dict:
     if not js or "jobspy" in state["options"].get("skip", []):
         return {"raw": []}
     return {"raw": jobspy_src.search(js["terms"], js["locations"], js["sites"], js["hours_old"],
-                                     js["per_term"], js.get("sleep", 4.0))}
+                                     js["per_term"], js.get("sleep", 4.0),
+                                     max_minutes=js.get("max_minutes"))}
 
 
 def source_remote(state: State) -> dict:

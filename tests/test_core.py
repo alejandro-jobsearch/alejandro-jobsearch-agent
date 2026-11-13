@@ -482,6 +482,39 @@ def test_jobspy_location_can_search_a_subset_of_terms(monkeypatch):
     assert calls == [("a", "Lima"), ("b", "Lima"), ("b", "Peru")]
 
 
+def test_jobspy_time_budget_stops_and_rotates(monkeypatch):
+    import datetime as dt
+    import sys
+    import types
+
+    from jobagent.sources import jobspy_src
+
+    calls, clock = [], iter([0, 0, 30, 61 * 60, 99 * 60])
+
+    class Empty:
+        def __len__(self):
+            return 0
+
+        def to_dict(self, _):
+            return []
+
+    def scrape(**kw):
+        calls.append(kw["search_term"])
+        return Empty()
+
+    class Day(dt.date):
+        @classmethod
+        def today(cls):
+            return dt.date.fromordinal(739001)  # odd ordinal: starts halfway
+
+    monkeypatch.setitem(sys.modules, "jobspy", types.SimpleNamespace(scrape_jobs=scrape))
+    monkeypatch.setattr(jobspy_src.time, "sleep", lambda _: None)
+    monkeypatch.setattr(jobspy_src.time, "monotonic", lambda: next(clock))
+    monkeypatch.setattr(jobspy_src.dt, "date", Day)
+    jobspy_src.search(["a", "b", "c", "d"], [{"name": "Lima"}], ["linkedin"], 24, 5, max_minutes=60)
+    assert calls == ["c", "d"]  # rotated to start at "c"; the budget stops it before "a"
+
+
 class _Resp:
     def __init__(self, payload=None, content=b""):
         self.payload, self.content = payload, content

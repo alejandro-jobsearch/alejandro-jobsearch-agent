@@ -41,7 +41,7 @@ jobs:
   run:
     runs-on: ubuntu-latest
     environment: ${{ inputs.environment }}
-    timeout-minutes: 90
+    timeout-minutes: 120   # JobSpy has its own budget (jobspy.max_minutes) so scoring fits
     permissions:
       contents: write
       actions: read
