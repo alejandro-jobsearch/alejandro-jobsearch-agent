@@ -10,6 +10,9 @@ from rapidfuzz import fuzz
 from jobagent.models import Job, _norm
 
 FAILED = re.compile(r"RECHAZAD|REJECTED|SIN RESPUESTA|NO AVANZ", re.I)
+# Agency job references ("JN-082026-7089433", Michael Page / PageGroup). The same reference is the same opening,
+# however the copy spells the agency ("Michaelpage", #120 duplicated #110).
+REF = re.compile(r"\b[a-z]{2}-\d{6}-\d{5,}\b")
 
 
 def _role_variants(role: str) -> list[str]:
@@ -87,7 +90,11 @@ class Context:
         been relaunched. It goes to the history, for the reader to judge."""
         company, title = self.canon(j.company), _norm(j.title)
         same, others = None, []
+        refs = set(REF.findall(f"{j.title} {j.url}".lower()))
         for a in self.applied:
+            if refs & set(REF.findall((a.get("role") or "").lower())):   # same agency reference, whatever the spelling
+                same = same or f'{a["company"]} — {a["role"]}' + (f' ({a["note"]})' if a.get("note") else "")
+                continue
             if fuzz.token_set_ratio(company, self.canon(a["company"])) < 85:
                 continue
             label = f'{a["company"]} — {a["role"]}' + (f' ({a["note"]})' if a.get("note") else "")

@@ -831,6 +831,17 @@ def test_applied_role_with_parenthesis_matches_either_title():
         assert ctx.applied_match(Job(source="exa", company="Keyrus", url="u", title=title))[0]
 
 
+def test_agency_reference_matches_whatever_the_company_spelling():
+    """#120 duplicated #110: same Michael Page reference, company written "Michaelpage"."""
+    ctx = _ctx([{"company": "Michael Page (cliente confidencial, grupo nacional)",
+                 "role": "Gerente de Data & Analytics (JN-082026-7089433)", "note": "POSTULADO 2026-11-11"}])
+    j = Job(source="exa", company="Michaelpage", title="GERENTE DE DATA & ANALYTICS - JN-082026-7089433",
+            url="https://www.michaelpage.pe/job-detail/gerente-de-data-analytics/ref/jn-082026-7089433")
+    assert ctx.applied_match(j)[0]
+    other = Job(source="exa", company="Michaelpage", title="Gerente de Tecnología - JN-102026-7135929", url="u")
+    assert not ctx.applied_match(other)[0]
+
+
 def test_eligibility_drops_country_remote_labels():
     """Keyrus #119: an aggregator copy in Portuguese, no location, only the label "Colômbia Remoto"."""
     pf = Prefilter({"title_include": ["lead"], "title_exclude": ["junior"], "geo_keep": ["peru"], "geo_drop": ["."],
