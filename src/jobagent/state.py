@@ -12,6 +12,13 @@ from jobagent.models import Job, _norm
 FAILED = re.compile(r"RECHAZAD|REJECTED|SIN RESPUESTA|NO AVANZ", re.I)
 
 
+def _role_variants(role: str) -> list[str]:
+    """A recorded role, plus its parts around a parenthesis: "Líder sênior de governança de IA (AI Governance
+    Lead)" must still meet either title on its own (Keyrus #119, third copy of #89)."""
+    m = re.fullmatch(r"\s*(.*?)\s*\((.*)\)\s*", role)
+    return [role, m.group(1), m.group(2)] if m and m.group(1) else [role]
+
+
 @dataclass
 class Context:
     data_dir: Path
@@ -84,7 +91,7 @@ class Context:
             if fuzz.token_set_ratio(company, self.canon(a["company"])) < 85:
                 continue
             label = f'{a["company"]} — {a["role"]}' + (f' ({a["note"]})' if a.get("note") else "")
-            if a["role"] and fuzz.token_sort_ratio(title, _norm(a["role"])) >= 80:
+            if a["role"] and max(fuzz.token_sort_ratio(title, _norm(r)) for r in _role_variants(a["role"])) >= 80:
                 if FAILED.search(a.get("note") or ""):
                     others.append(f"posible relanzamiento: {label}")
                 else:

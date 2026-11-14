@@ -821,6 +821,28 @@ def test_company_aliases_meet_the_history(tmp_path):
     assert ctx.canon("Acme Data") == "acme data"
 
 
+def test_applied_role_with_parenthesis_matches_either_title():
+    """Keyrus #119: recorded as "Líder sênior de governança de IA (AI Governance Lead)", the copy came titled
+    with the Portuguese part only (token sort 77 against the whole role)."""
+    ctx = _ctx([{"company": "Keyrus Colombia", "role": "Líder sênior de governança de IA (AI Governance Lead)",
+                 "note": "DESCARTADA 2026-11-11"}])
+    ctx.aliases = {"Keyrus Colombia": ["Keyrus"]}
+    for title in ("Líder sênior de governança de IA", "AI Governance Lead"):
+        assert ctx.applied_match(Job(source="exa", company="Keyrus", url="u", title=title))[0]
+
+
+def test_eligibility_drops_country_remote_labels():
+    """Keyrus #119: an aggregator copy in Portuguese, no location, only the label "Colômbia Remoto"."""
+    pf = Prefilter({"title_include": ["lead"], "title_exclude": ["junior"], "geo_keep": ["peru"], "geo_drop": ["."],
+                    "eligibility_drop": [
+        r"\b(col[oô]mbia|m[eé]xico|chile)\s*[-|·,]?\s*(remot[oa]|remote)\b(?![^.\n]{0,40}per[uú])"]})
+    def mk(desc):
+        return Job(source="exa", company="Keyrus", title="AI Governance Lead", url="u", location="", description=desc)
+    assert not pf.eligible_ok(mk("há 4 semanas\n\nColômbia Remoto Tempo integral Sênior"))
+    assert not pf.eligible_ok(mk("Colombia - Remote, full time"))
+    assert pf.eligible_ok(mk("Colombia Remote or Peru Remote"))
+
+
 def test_exa_apply_links_follow_teamtailor_from_a_copy():
     from jobagent.sources.exa import apply_links
     page = '<a href="https://knowmadmood.teamtailor.com/jobs/8437310-ai-architect-latam\\">Apply</a>'
