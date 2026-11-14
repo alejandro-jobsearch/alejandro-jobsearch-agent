@@ -99,9 +99,12 @@ def source_jobspy(state: State) -> dict:
     js = state["config"].get("jobspy")
     if not js or "jobspy" in state["options"].get("skip", []):
         return {"raw": []}
+    title_ok, ctx = Prefilter(state["config"]["prefilter"]).title_ok, state.get("ctx")
     return {"raw": jobspy_src.search(js["terms"], js["locations"], js["sites"], js["hours_old"],
                                      js["per_term"], js.get("sleep", 4.0),
-                                     max_minutes=js.get("max_minutes"))}
+                                     max_minutes=js.get("max_minutes"),
+                                     # job pages only for what can pass the title prefilter and is new
+                                     keep=lambda j: title_ok(j) and not (ctx and ctx.is_seen(j)))}
 
 
 def source_remote(state: State) -> dict:

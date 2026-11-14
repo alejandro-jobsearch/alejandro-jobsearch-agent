@@ -515,6 +515,45 @@ def test_jobspy_time_budget_stops_and_rotates(monkeypatch):
     assert calls == ["c", "d"]  # rotated to start at "c"; the budget stops it before "a"
 
 
+def test_jobspy_reads_job_pages_only_for_kept_postings(monkeypatch):
+    import sys
+    import types
+
+    from jobagent.sources import jobspy_src
+
+    flags, read = [], []
+
+    class Rows:
+        def __init__(self, rows):
+            self.rows = rows
+
+        def __len__(self):
+            return len(self.rows)
+
+        def to_dict(self, _):
+            return self.rows
+
+    def row(i, title):
+        return {"site": "linkedin", "title": title, "company": "X", "location": "Lima, Peru",
+                "job_url": f"https://www.linkedin.com/jobs/view/{i}", "description": None}
+
+    def scrape(**kw):
+        flags.append(kw["linkedin_fetch_description"])
+        return Rows([row(1, "Head of AI"), row(2, "Store Clerk"), row(1, "Head of AI")])
+
+    def details(job_id):
+        read.append(job_id)
+        return {"description": "full text", "job_type": None, "compensation": None}
+
+    monkeypatch.setitem(sys.modules, "jobspy", types.SimpleNamespace(scrape_jobs=scrape))
+    monkeypatch.setattr(jobspy_src.time, "sleep", lambda _: None)
+    jobs = jobspy_src.search(["a", "b"], [{"name": "Lima"}], ["linkedin"], 50, 5,
+                             keep=lambda j: "Head" in j.title, details=details)
+    assert flags == [False, False]           # search pages only
+    assert read == ["1"]                     # one job page, once per run, only for the kept title
+    assert [j.description for j in jobs] == ["full text", "", "full text"] * 2
+
+
 class _Resp:
     def __init__(self, payload=None, content=b""):
         self.payload, self.content = payload, content
@@ -660,6 +699,25 @@ def test_exa_to_job_keeps_only_recent_postings():
     assert to_job({**ok, "url": "https://linkedin.com/posts/x"}, day, 45, "q") is None
     assert to_job({**ok, "text": "Corto"}, day, 45, "q") is None
     assert to_job({**ok, "text": "Noticia sobre el mercado. " * 30}, day, 45, "q") is None
+
+
+def test_exa_reads_hiring_linkedin_posts():
+    from jobagent.sources.exa import li_post_title, to_job
+    day = date(2026, 11, 14)
+    head = ("# 📢 ¡Nueva oportunidad laboral | Subgerente/a de Transformación e Inteligencia Artificial! | "
+            "Ana R. · LinkedIn · 2026-11-10\n\n")
+    post = {"url": "https://es.linkedin.com/posts/ana_x-activity-1", "publishedDate": "2026-11-10T00:00:00Z",
+            "title": "📢 ¡Nueva oportunidad laboral | Subgerente/a de Transformación e Inteligencia Artificial!",
+            "text": head + "Desde Acme Search nos encontramos en búsqueda de un/a Subgerente. " * 8}
+    j = to_job(post, day, 30, "q")
+    assert (j.title, j.company) == ("Subgerente/a de Transformación e Inteligencia Artificial",
+                                    "Ana R. (post LinkedIn)")
+    musing = "# Lo que aprendí liderando equipos | Ana R. · LinkedIn\n\n" + "Reflexiones sobre cultura. " * 15
+    assert to_job({**post, "title": "Lo que aprendí", "text": musing}, day, 30, "q") is None
+    assert li_post_title("🚀 ¡Estamos en búsqueda de un/a Subgerente de IA! | Luis P.", "") == \
+        ("Subgerente de IA", "Luis P. (post LinkedIn)")
+    assert li_post_title("[Perú] En Acme Search nos encontramos en búsqueda de un(a) Gerente de Tecnología para "
+                         "liderar la estrategia. | Luis P.", "")[0] == "Gerente de Tecnología"
 
 
 def test_exa_waits_for_its_interval(monkeypatch):

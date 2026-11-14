@@ -32,6 +32,43 @@ _EN = re.compile(r"^(.+)\s+en\s+((?:[A-Z0-9][\w&.-]*\s?){1,3})$")   # only trust
 _DASH = re.compile(r"^(.+)\s+[-–—]\s+([^-–—]+)$")
 _POSTING = re.compile(r"requisit|requerimiento|requirement|qualification|responsabilidad|responsibilit|funciones|what you", re.I)
 _NOT_POSTING = re.compile(r"/(posts?|pulse|in|blog|news|reviews?|salaries|salarios)/", re.I)
+# LinkedIn posts (2026-11-14): headhunters announce senior roles as feed posts, often with the consultant's email
+# and no job page. Exa indexes them; the daily LinkedIn job search never sees them. A post counts when it says it
+# is hiring.
+_LI_POST = re.compile(r"(^|\.)linkedin\.com$", re.I)
+_HIRING = re.compile(r"estamos (en )?(b[uú]squeda|buscando)|nos encontramos en b[uú]squeda|en b[uú]squeda de|buscamos"
+                     r"|oportunidad laboral|we'?re hiring|#hiring|is hiring|we are looking for|env[ií]a(r)? (tu |su )?cv"
+                     r"|postula(r|te)?\b|apply here", re.I)
+# "🚀 ¡Estamos en búsqueda de un/a Subgerente de IA!" -> "Subgerente de IA"
+_POST_LEAD = re.compile(r"^.{0,80}?\b(?:b[uú]squeda|buscando|buscamos)\b(?:\s+de)?\s*:?\s*"
+                        r"(?:(?:un|una|un/a|un\(a\)|una?/o)\s+)?", re.I)
+_POST_NOISE = re.compile(r"^(?:estimada red|nueva oportunidad laboral|oportunidad laboral|hiring|post by .*)$", re.I)
+_POST_TAIL = re.compile(r"\s+(?:para|for)\s+(?:liderar|lead|una?|el|la|nuestr[oa]|importante|Per[uú]|LATAM)\b.*$", re.I)
+_SYMBOLS = re.compile(r"[^\w\s/()&,.\-–:+#'’]", re.U)
+_POST_HEAD = re.compile(r"^#\s*(.+?)\s+\|\s+([^|·]+?)\s+·\s+LinkedIn", re.M)
+
+
+def li_post_title(raw: str, text: str) -> tuple[str, str]:
+    """(role, recruiter) from a LinkedIn post. Exa's title is "<headline> | <author>", sometimes without the
+    author or just "Post by <author>"; the text's first heading carries "# <headline> | <author> · LinkedIn".
+    The employer is usually confidential: the recruiter stands in for it, as with headhunter boards (contact
+    the consultant)."""
+    head = _POST_HEAD.search(text or "")
+    author = head[2].strip() if head else ""
+    if not author and (m := re.match(r"post by (.+)$", raw or "", re.I)):
+        author = m[1].strip()
+    headline = head[1] if head and (raw or "").lower().startswith("post by") else (raw or "")
+    parts = [p for p in re.split(r"\s+\|\s+", headline) if p.strip() and p.strip() != author]
+    if not author and len(parts) > 1:
+        author = parts.pop().strip()
+    roles = []
+    for p in parts:
+        p = _SYMBOLS.sub(" ", p)
+        p = _POST_TAIL.sub("", _POST_LEAD.sub("", p))
+        p = re.sub(r"\s+", " ", p).strip(" !.:|-–,")
+        if p and not _POST_NOISE.match(p):
+            roles.append(p)
+    return " | ".join(roles), f"{author} (post LinkedIn)" if author else "Post LinkedIn"
 # Computrabajo: "Empleo deGerente de TI en Acme S.A.C. - Miraflores" (the space after "de" is lost); its list
 # pages (/trabajo-de-...) are not postings. A removed posting redirects to one of them: is_closed catches that.
 _CT_TITLE = re.compile(r"^Empleo de\s*(.+) en (.+?) - ([^-]+)$")
@@ -164,7 +201,11 @@ def text_posted(text: str, today: date) -> date | None:
 def to_job(r: dict, today: date, max_age_days: int, term: str) -> Job | None:
     """A Job from a search result, or None when the page is not a recent posting."""
     url, text = r.get("url") or "", (r.get("text") or "").strip()
-    if not url or _NOT_POSTING.search(urlparse(url).path + "/") or len(text) < MIN_TEXT or not _POSTING.search(text):
+    li_post = bool(_LI_POST.search(urlparse(url).hostname or "")) and urlparse(url).path.startswith("/posts/")
+    if li_post:
+        if len(text) < MIN_TEXT or not _HIRING.search(text):
+            return None
+    elif not url or _NOT_POSTING.search(urlparse(url).path + "/") or len(text) < MIN_TEXT or not _POSTING.search(text):
         return None
     if _JUNK_HOST.search(urlparse(url).hostname or ""):
         return None
@@ -174,7 +215,9 @@ def to_job(r: dict, today: date, max_age_days: int, term: str) -> Job | None:
     if posted and posted < today - timedelta(days=max_age_days):
         return None
     location = ""
-    if "computrabajo." in url:
+    if li_post:
+        title, company = li_post_title(r.get("title") or "", text)
+    elif "computrabajo." in url:
         if not _CT_POSTING.search(url) or not (m := _CT_TITLE.match((r.get("title") or "").strip())):
             return None
         title, company, location = m[1].strip(), m[2].strip(), f"{m[3].strip()}, Perú"
