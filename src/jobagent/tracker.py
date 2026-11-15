@@ -85,6 +85,8 @@ class Tracker:
             out.append("solo-referido")
         if llm.get("remote_eligibility") in ("peru_ok", "latam", "unclear"):
             out.append(f"remoto:{llm['remote_eligibility']}")
+        if llm.get("relocation") in ("offered", "unclear"):
+            out.append(f"reubicacion:{llm['relocation']}")
         return out
 
     @staticmethod
@@ -100,7 +102,7 @@ class Tracker:
                      if llm.get("hard_exclusion") or llm.get("temporary") else "")
         return f"""**[{j.title}]({j.url})** — {j.company} · {j.location or 's/ubicación'} · fuente: {j.source} · publicada: {j.date_posted or '?'} · salario: {sal}
 
-**Score {s.score}** ({s.band}) · **ATS antes {s.ats_before}%** · lane {llm.get('lane', '–')} · remoto: {llm.get('remote_eligibility', '–')} · inglés de trabajo: {llm.get('english_work', '–')} · nivel real: {llm.get('seniority_real', '–')}
+**Score {s.score}** ({s.band}) · **ATS antes {s.ats_before}%** · lane {llm.get('lane', '–')} · remoto: {llm.get('remote_eligibility', '–')}{' · reubicación: ' + llm['relocation'] if llm.get('relocation') not in (None, 'none') else ''} · inglés de trabajo: {llm.get('english_work', '–')} · nivel real: {llm.get('seniority_real', '–')}
 
 > {llm.get('summary', '')}
 {exclusion}

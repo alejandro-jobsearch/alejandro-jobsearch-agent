@@ -26,6 +26,8 @@ class LLMScore(BaseModel):
     internal_bank_role: bool = False    # owns a domain's technology INSIDE a bank/insurer (criteria §8)
     lane: Literal["A", "B", "C", "D", "none"]
     remote_eligibility: Literal["not_remote", "peru_ok", "latam", "unclear", "restricted"] = "not_remote"
+    # on site outside Peru (criteria §4, 2026-11-14): only leadership roles, never without visa sponsorship
+    relocation: Literal["none", "offered", "unclear", "no_sponsorship"] = "none"
     lang: Literal["en", "es"]
     english_work: Literal["yes", "no", "unspecified"]
     seniority_real: str
@@ -61,6 +63,10 @@ Return ONLY a JSON object with exactly these keys:
   named, or worldwide/anywhere); "latam" if fully remote for Latin America or the Americas; "restricted" if
   remote but limited to other countries or regions (US only, work authorization elsewhere, EU/UK/APAC only,
   time-zone overlap impossible from Peru); "unclear" if remote and the posting does not say who can apply
+- "relocation": "none" if the job is in Peru or fully remote; otherwise (on site or hybrid in another country)
+  "offered" if it states relocation support or visa sponsorship, "no_sponsorship" if it rules sponsorship out
+  or requires existing work authorization there, "unclear" if it says neither. Apply the criteria's
+  relocation rules (leadership level only) to "hard_exclusion" and "geo"
 - "lang": language the posting is written in, "en" or "es"
 - "english_work": "yes" | "no" | "unspecified" (English as day-to-day working language)
 - "temporary": true if the job is temporary or fixed-term (e.g. "temporal", "por X meses", "reemplazo",
@@ -92,10 +98,14 @@ def _json_body(text: str) -> str:
 
 
 def _apply_remote_rule(s: LLMScore) -> LLMScore:
-    """A remote job the candidate cannot legally take is a hard exclusion, whatever its numeric scores."""
+    """A job the candidate cannot legally take is a hard exclusion, whatever its numeric scores: remote limited
+    to another region, or on site abroad without visa sponsorship."""
     if s.remote_eligibility == "restricted" and not s.hard_exclusion:
         s.hard_exclusion = True
         s.exclusion_reason = s.exclusion_reason or "Remoto restringido a otra región"
+    if s.relocation == "no_sponsorship" and not s.hard_exclusion:
+        s.hard_exclusion = True
+        s.exclusion_reason = s.exclusion_reason or "Reubicación sin patrocinio de visa"
     return s
 
 

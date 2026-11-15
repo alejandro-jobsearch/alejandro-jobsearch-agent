@@ -51,6 +51,35 @@ def test_prefilter_title_domain_geo():
     assert pf(mk("Head of AI", ""))                       # unknown location kept
 
 
+def test_prefilter_relocation_only_leadership_with_sponsorship():
+    pf = Prefilter({
+        "title_include": [r"\b(head|director|manager|architect)"],
+        "title_exclude": [r"\bjunior\b"],
+        "title_domain": [r"\b(ai|data|architect)"],
+        "geo_keep": ["peru|lima"],
+        "geo_drop": ["."],
+        "eligibility_drop": [r"(must|required to) (be )?(based |located )?in (the )?(united states|us)"],
+        "relocation": {"title": [r"\b(head|director)\b"], "places": [r"mexico|new york|madrid"],
+                       "sponsorship_drop": [r"no (visa )?sponsorship|not (able to )?sponsor"]},
+    })
+    mk = lambda t, loc, d="": Job(source="x", company="c", title=t, location=loc, url=t + loc, description=d)
+    assert pf(mk("Director of Data", "Mexico City"))
+    assert pf(mk("Head of AI", "New York, NY", "Must be based in the United States."))  # on site is the point
+    assert not pf(mk("Head of AI", "New York, NY", "We do not offer visa sponsorship; no visa sponsorship."))
+    assert not pf(mk("Data Architect", "Madrid"))          # not leadership: no relocation
+    assert not pf(mk("Director of Data", "Tokyo"))         # not a relocation country
+    assert not pf.relocation(mk("Head of AI", "Lima, Peru"))
+
+
+def test_relocation_without_sponsorship_is_hard_exclusion():
+    from jobagent.scoring import LLMScore, _apply_remote_rule
+    base = dict(dims={}, requires_operator_leadership=False, lane="none", lang="en", english_work="yes",
+                seniority_real="Director", gaps=[], summary="", keywords=[])
+    s = _apply_remote_rule(LLMScore(**base, relocation="no_sponsorship"))
+    assert s.hard_exclusion and "patrocinio" in s.exclusion_reason
+    assert not _apply_remote_rule(LLMScore(**base, relocation="offered")).hard_exclusion
+
+
 def test_tracker_select_threshold_and_watch_word_boundary():
     from jobagent.models import ScoredJob
     from jobagent.tracker import select

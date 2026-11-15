@@ -179,9 +179,17 @@ def prefilter(state: State) -> dict:
 def unseen(state: State) -> dict:
     """Drop postings already processed in previous runs (state/seen.jsonl in the data repo)."""
     new = [j for j in state["jobs"] if not state["ctx"].is_seen(j)]
+    # relocation roles (2026-11-14): big boards carry many on-site leadership roles abroad; cap the LLM calls.
+    # Counted after `seen`, so the ones left out today are new tomorrow.
+    pf = Prefilter(state["config"]["prefilter"])
+    cap = (state["config"]["prefilter"].get("relocation") or {}).get("max_per_run", 15)
+    moved = [j for j in new if pf.relocation(j)]
+    if len(moved) > cap:
+        out = {id(j) for j in moved[cap:]}
+        new = [j for j in new if id(j) not in out]
     if limit := state["options"].get("limit"):
         new = new[:limit]
-    return {"jobs": new, "stats": {"new": len(new)}}
+    return {"jobs": new, "stats": {"new": len(new), "relocation": min(len(moved), cap)}}
 
 
 def company_check(state: State) -> dict:

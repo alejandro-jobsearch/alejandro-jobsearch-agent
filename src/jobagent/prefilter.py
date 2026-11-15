@@ -22,6 +22,11 @@ class Prefilter:
         self.eligibility_drop = _rx(cfg.get("eligibility_drop"))
         self.company_exclude = _rx(cfg.get("company_exclude"))
         self.job_types = {t.lower() for t in cfg.get("job_type_exclude", [])}
+        reloc = cfg.get("relocation") or {}
+        self.reloc_title = _rx(reloc.get("title"))
+        self.reloc_places = _rx(reloc.get("places"))
+        self.reloc_exclude = _rx(reloc.get("title_exclude"))
+        self.sponsorship_drop = _rx(reloc.get("sponsorship_drop"))
 
     def title_ok(self, j: Job) -> bool:
         t = j.title
@@ -41,13 +46,21 @@ class Prefilter:
         return bool(self.rescue_places and self.rescue_text and self.rescue_places.search(j.location or "")
                     and self.rescue_text.search(j.description or ""))
 
+    def relocation(self, j: Job) -> bool:
+        """A leadership role (jefatura/gerencia and up) on site in a country the candidate would move to
+        (2026-11-14). Not for places geo_keep already keeps: those are local or open remote roles."""
+        loc = j.location or ""
+        return bool(self.reloc_title and self.reloc_places and self.reloc_title.search(j.title)
+                    and not (self.reloc_exclude and self.reloc_exclude.search(j.title))
+                    and self.reloc_places.search(loc) and not self.geo_keep.search(loc))
+
     def geo_ok(self, j: Job) -> bool:
         loc = j.location or ""
         if self.geo_block and self.geo_block.search(loc):   # mis-geocoded places win over geo_keep
             return False
         if self.geo_keep.search(loc):
             return True
-        if self.rescued(j):
+        if self.rescued(j) or self.relocation(j):
             return True
         if self.geo_drop and self.geo_drop.search(loc):
             return False
@@ -55,10 +68,14 @@ class Prefilter:
 
     def eligible_ok(self, j: Job) -> bool:
         """Remote postings from outside the local market that state they only hire elsewhere. Saves the LLM call;
-        the LLM's `remote_eligibility` catches what these patterns miss."""
+        the LLM's `remote_eligibility` catches what these patterns miss. A relocation role is on site abroad by
+        design ("must be based in New York" is expected): it is dropped only when it rules out visa sponsorship."""
+        text = f"{j.title}\n{j.location}\n{j.description}"
+        if self.relocation(j):
+            return not (self.sponsorship_drop and self.sponsorship_drop.search(text))
         if not self.eligibility_drop or (self.geo_local and self.geo_local.search(j.location or "")):
             return True
-        return not self.eligibility_drop.search(f"{j.title}\n{j.location}\n{j.description}")
+        return not self.eligibility_drop.search(text)
 
     def __call__(self, j: Job) -> bool:
         return (self.title_ok(j) and self.type_ok(j) and self.company_ok(j) and self.geo_ok(j)
