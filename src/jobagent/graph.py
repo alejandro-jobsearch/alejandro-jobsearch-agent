@@ -218,20 +218,34 @@ def mark_applied(state: State) -> dict:
     ctx, pause = state["ctx"], state["config"].get("company_pause") or {}
     items = []
     for j in state["jobs"]:
-        # web-search copies filed under the aggregator's name: use the employer the page names, if known
-        if j.source == "exa" and j.company == exa.host_company(j.url) and (real := ctx.employer_in(j.description)) \
-                and ctx.canon(real) != ctx.canon(j.company):
+        # web-search copies filed under the aggregator's name, and LinkedIn posts filed under the recruiter: use
+        # the employer the page names, if known (the agency in the recruiter's headline)
+        stand_in = j.source == "exa" and (j.company == exa.host_company(j.url) or j.company.endswith("post LinkedIn)")
+                                          or j.company == "Post LinkedIn")
+        if stand_in and (real := ctx.employer_in(j.description)) and ctx.canon(real) != ctx.canon(j.company):
             j = j.model_copy(update={"company": real})
+            stand_in = False
         same, others = ctx.applied_match(j)
+        if not same and stand_in:       # employer hidden: an applied role with this same distinctive title
+            same = ctx.copy_of(j.title)
         paused = ctx.paused(j, pause.get("after", 2), pause.get("referrals", [])) if pause else None
         items.append(ScoredJob(job=j, applied_match=same, company_history=others, paused=paused))
     return {"candidates": items, "stats": {"already_applied": sum(bool(i.applied_match) for i in items),
                                            "paused": sum(bool(i.paused) for i in items)}}
 
 
+# Below this, a web-search page is a stub (title, salary, visa line) with no duties: the LLM scored a 573-char copy on a
+# visa-sponsor board 76 with 100% ATS from the title alone (the role was already filled). Real postings in the tracker run from
+# ~1,600 chars up. LinkedIn posts are short by nature and are exempt.
+THIN_PAGE = 1000
+
+
 def title_only(j: Job) -> bool:
-    """No description to judge it by (Bumeran sitemap, Michael Page blocked): triage list, not scoring."""
-    return j.description in (bumeran.NO_DESCRIPTION, boards.MP_NO_DESCRIPTION)
+    """No description to judge it by (Bumeran sitemap, Michael Page blocked, a web-search stub): triage list,
+    not scoring."""
+    if j.description in (bumeran.NO_DESCRIPTION, boards.MP_NO_DESCRIPTION):
+        return True
+    return j.source == "exa" and "linkedin.com/posts/" not in j.url and len(j.description.strip()) < THIN_PAGE
 
 
 def fan_out(state: State):

@@ -2,6 +2,7 @@
 import json
 import re
 from dataclasses import dataclass, field
+from datetime import date
 from pathlib import Path
 
 import yaml
@@ -13,6 +14,22 @@ FAILED = re.compile(r"RECHAZAD|REJECTED|SIN RESPUESTA|NO AVANZ", re.I)
 # Agency job references ("JN-082026-7089433", Michael Page / PageGroup). The same reference is the same opening,
 # however the copy spells the agency ("Michaelpage", #120 duplicated #110).
 REF = re.compile(r"\b[a-z]{2}-\d{6}-\d{5,}\b")
+APPLIED_ON = re.compile(r"POSTULAD[OA] (\d{4}-\d{2}-\d{2})", re.I)
+_SPELLED = [(re.compile(r"\binteligencia artificial\b"), "ia"), (re.compile(r"\bartificial intelligence\b"), "ai")]
+
+
+def _title(s: str) -> str:
+    """Normalized title with "inteligencia artificial"/"artificial intelligence" folded to IA/AI: a recruiter's post
+    "Subgerente de Inteligencia Artificial" is the "Subgerente de IA - EDP" already applied to."""
+    t = _norm(s)
+    for rx, short in _SPELLED:
+        t = rx.sub(short, t)
+    return t
+
+
+def _applied_on(note: str | None) -> date | None:
+    m = APPLIED_ON.search(note or "")
+    return date.fromisoformat(m[1]) if m else None
 
 
 def _role_variants(role: str) -> list[str]:
@@ -87,8 +104,10 @@ class Context:
 
         Returns (same role already applied, other roles applied at the same company). A same-titled application
         that failed does not block: the posting is new (seen postings never get here), so the search may have
-        been relaunched. It goes to the history, for the reader to judge."""
-        company, title = self.canon(j.company), _norm(j.title)
+        been relaunched. It goes to the history, for the reader to judge. Unless the posting is dated on or before
+        the application: then it is the same opening, found again on another page (a recruiter's post of 2026-10-22
+        was the role applied to on 2026-10-26 and rejected)."""
+        company, title = self.canon(j.company), _title(j.title)
         same, others = None, []
         refs = set(REF.findall(f"{j.title} {j.url}".lower()))
         for a in self.applied:
@@ -98,14 +117,29 @@ class Context:
             if fuzz.token_set_ratio(company, self.canon(a["company"])) < 85:
                 continue
             label = f'{a["company"]} — {a["role"]}' + (f' ({a["note"]})' if a.get("note") else "")
-            if a["role"] and max(fuzz.token_sort_ratio(title, _norm(r)) for r in _role_variants(a["role"])) >= 80:
-                if FAILED.search(a.get("note") or ""):
+            if a["role"] and max(fuzz.token_sort_ratio(title, _title(r)) for r in _role_variants(a["role"])) >= 80:
+                applied_on = _applied_on(a.get("note"))
+                if FAILED.search(a.get("note") or "") and not (j.date_posted and applied_on
+                                                                and j.date_posted <= applied_on):
                     others.append(f"posible relanzamiento: {label}")
                 else:
                     same = same or label
             else:
                 others.append(label)
         return same, others
+
+    def copy_of(self, title: str, min_tokens: int = 5) -> str | None:
+        """An application whose role carries this whole title, whatever the company: for aggregator copies that
+        hide the employer ("At reputed company...": an AI Manager role applied to came back under the host's name).
+        Only distinctive titles (`min_tokens` distinct words): "AI Manager" alone names many openings."""
+        t = _title(title)
+        if len(set(t.split())) < min_tokens:
+            return None
+        for a in self.applied:
+            if a.get("role") and fuzz.token_set_ratio(t, _title(a["role"])) >= 95 \
+                    and len(set(t.split()) & set(_title(a["role"]).split())) >= min_tokens:
+                return f'{a["company"]} — {a["role"]}' + (f' ({a["note"]})' if a.get("note") else "")
+        return None
 
     def paused(self, j: Job, after: int, referrals: list[str]) -> str | None:
         """Why the company is paused: `after` or more past applications there closed with no answer or a

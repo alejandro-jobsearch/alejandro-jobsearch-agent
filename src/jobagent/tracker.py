@@ -295,7 +295,9 @@ def intake_link(repo: str, job: Job) -> str:
 def select(scored: list[ScoredJob], cfg: dict) -> list[tuple[ScoredJob, bool]]:
     """(item, is_watch) for postings that deserve an issue: score ≥ min_score, or a watched company or title
     ≥ watch_min.
-    Postings the LLM flagged as temporary contracts or hard exclusions never get an issue (criteria §7)."""
+    Postings the LLM flagged as temporary contracts or hard exclusions never get an issue (criteria §7). A role
+    abroad that does not say whether it sponsors a visa needs min_score: the watch list does not rescue it
+    (2026-11-15: four watched-company roles at 60-72 in Stockholm, London, Atlanta and San Francisco)."""
     watch, watch_title = watch_re(cfg), watch_title_re(cfg)
     out = []
     for s in scored:
@@ -304,7 +306,7 @@ def select(scored: list[ScoredJob], cfg: dict) -> list[tuple[ScoredJob, bool]]:
             continue
         if s.score >= cfg["min_score"]:
             out.append((s, False))
-        elif s.score >= cfg["watch_min"] and ((watch and watch.search(_norm(s.job.company)))
+        elif s.score >= cfg["watch_min"] and llm.get("relocation") != "unclear" and ((watch and watch.search(_norm(s.job.company)))
                                               or (watch_title and watch_title.search(_norm(s.job.title)))):
             out.append((s, True))
     return sorted(out, key=lambda t: -t[0].score)

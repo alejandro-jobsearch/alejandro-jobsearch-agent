@@ -1110,3 +1110,55 @@ def test_exa_apply_links_skip_teamtailor_non_job_pages():
             '<a href="https://acme.applytojob.com/apply/AbC/Head">j</a>')
     assert apply_links(page, "https://acme.com/c") == ["https://acme.teamtailor.com/jobs/123-head",
                                                         "https://acme.applytojob.com/apply/AbC/Head"]
+
+
+def test_select_relocation_unclear_needs_min_score():
+    """A role abroad that says nothing about a visa is not rescued by the watch list."""
+    from jobagent.tracker import select
+
+    cfg = {"min_score": 75, "watch_min": 60, "watch_companies": ["Acme"]}
+    mk = lambda score, reloc, url: ScoredJob(job=Job(source="x", company="Acme", title="t", url=url), score=score,
+                                            llm={"relocation": reloc})
+    unclear, offered, high = mk(72, "unclear", "a"), mk(65, "offered", "b"), mk(80, "unclear", "c")
+    assert select([unclear, offered, high], cfg) == [(high, False), (offered, True)]
+
+
+def test_thin_web_search_page_goes_to_triage():
+    from jobagent.graph import title_only
+
+    stub = Job(source="exa", company="Board", title="Senior Director", url="https://board.example/job/1",
+               description="Salary £105,000. Sponsor licence: Skilled Worker route. " * 5)
+    post = stub.model_copy(update={"url": "https://es.linkedin.com/posts/x_activity-1"})
+    full = stub.model_copy(update={"description": "Responsibilities and requirements. " * 60})
+    assert title_only(stub) and not title_only(post) and not title_only(full)
+
+
+def test_posting_dated_before_a_failed_application_is_that_application():
+    note = "RECHAZADA 2026-11-03 sin entrevista; POSTULADO 2026-10-26 vía pipeline"
+    ctx = _ctx([{"company": "Acme Talent", "role": "Subgerente de IA - EDP (Servicios financieros)", "note": note}])
+    old = Job(source="exa", company="Acme Talent", title="Subgerente de Inteligencia Artificial", url="u",
+              date_posted=date(2026, 10, 22))
+    assert ctx.applied_match(old)[0]
+    new = old.model_copy(update={"date_posted": date(2026, 11, 10)})
+    same, others = ctx.applied_match(new)
+    assert same is None and others[0].startswith("posible relanzamiento")
+
+
+def test_copy_of_matches_hidden_employer_by_distinctive_title():
+    ctx = _ctx([{"company": "Acme Global", "role": "Acme Global - Artificial Intelligence Manager (AI Manager) - "
+                                                   "(LATAM CANDIDATES ONLY)", "note": "POSTULADO 2026-11-07"}])
+    assert ctx.copy_of("Artificial Intelligence Manager (AI Manager) - (LATAM CANDIDATES ONLY)")
+    assert ctx.copy_of("AI Manager") is None
+
+
+def test_mark_applied_uses_agency_named_in_linkedin_post(tmp_path):
+    from jobagent import graph
+    from jobagent.state import Context
+
+    ctx = Context(data_dir=tmp_path, criteria="", cv={}, applied=[
+        {"company": "Acme Talent", "role": "Subgerente de IA - EDP", "note": "POSTULADO 2026-10-26"}])
+    j = Job(source="exa", company="Daniela O. (post LinkedIn)", title="Subgerente de Inteligencia Artificial",
+            url="https://es.linkedin.com/posts/x_activity-1",
+            description="# Buscamos | Daniela O. · LinkedIn\n\n**Daniela O.**: Talent Acquisition @ Acme Talent")
+    out = graph.mark_applied({"ctx": ctx, "config": {}, "jobs": [j]})
+    assert out["candidates"][0].applied_match and out["candidates"][0].job.company == "Acme Talent"
