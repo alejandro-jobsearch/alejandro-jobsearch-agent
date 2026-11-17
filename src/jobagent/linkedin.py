@@ -16,10 +16,12 @@ UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.3
 JOB_ID = re.compile(r"linkedin\.com/jobs/view/(?:[^/?]*-)?(\d+)")
 # Pages that answer HTTP 200 for a posting that is gone ("soft 404"). Matched against the <title> and the first
 # visible text only, so boilerplate further down a live posting can't trigger it. JazzHR serves "Inactive Career
-# Page" for every URL of a lapsed account (Pacifica Continental #105, 2026-11-11).
+# Page" for every URL of a lapsed account (Pacifica Continental #105, 2026-11-11). Aggregators such as RemoteHunt
+# keep the page up with "This job is closed." (CI&T #132, 2026-11-16).
 _DEAD = re.compile(r"inactive career page|account is no longer active|(job|position|posting|vacancy|opening|role)"
                    r" (is )?no longer (available|open|active|accepting)|no longer accepting applications"
                    r"|(job|posting|position) (has )?(expired|been filled|been closed)|page (was )?not found"
+                   r"|(this )?(job|posting|position|role|vacancy) is (now )?closed|took it off (their|its) careers site"
                    r"|(oferta|vacante|aviso|puesto|convocatoria) (ya )?no (está|se encuentra) (disponible|activ[ao]|vigente)"
                    r"|(oferta|vacante|aviso|convocatoria) (ha )?(expirad[ao]|finalizad[ao]|cerrad[ao])", re.I)
 

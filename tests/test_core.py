@@ -1032,6 +1032,10 @@ def test_dead_page_soft_404():
            "Note: once the position has been filled we close the page.</body>"
     assert not dead_page(live)
     assert not dead_page("")
+    remotehunt = ('<title>AI Solution Architect at CI&amp;T</title><body><h1>AI Solution Architect</h1>'
+                  '<div><strong>This job is closed.</strong> CI&amp;T took it off their careers site.</div></body>')
+    assert dead_page(remotehunt)
+    assert not dead_page("<body><h1>Architect</h1><p>Applications close when the role is filled.</p></body>")
 
 
 def test_exa_is_closed_on_soft_404(monkeypatch):
