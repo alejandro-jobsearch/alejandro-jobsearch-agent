@@ -14,7 +14,7 @@ def main() -> int:
     r = c.chat.completions.create(
         model=m,
         messages=[{"role": "user", "content": "Reply with exactly: OK"}],
-        max_tokens=20,
+        max_tokens=2000,  # reasoning models spend tokens before answering
     )
     print(f"plain: {r.choices[0].message.content!r} ({time.perf_counter() - t:.1f}s, usage={r.usage})")
 
@@ -28,7 +28,7 @@ def main() -> int:
                                             'Schema: {"score": int, "reason": str}'},
             ],
             response_format={"type": "json_object"},
-            max_tokens=200,
+            max_tokens=2000,
         )
         data = json.loads(r.choices[0].message.content)
         print(f"json_mode: ok {data} ({time.perf_counter() - t:.1f}s)")
