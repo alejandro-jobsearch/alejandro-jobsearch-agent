@@ -3,12 +3,12 @@ import json
 import sys
 import time
 
-from jobagent.llm import client, model
+from jobagent.llm import client, model, provider
 
 
 def main() -> int:
     c, m = client(), model()
-    print(f"model={m}")
+    print(f"provider={provider()} model={m}")
 
     t = time.perf_counter()
     r = c.chat.completions.create(

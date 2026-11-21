@@ -1166,3 +1166,22 @@ def test_mark_applied_uses_agency_named_in_linkedin_post(tmp_path):
             description="# Buscamos | Daniela O. · LinkedIn\n\n**Daniela O.**: Talent Acquisition @ Acme Talent")
     out = graph.mark_applied({"ctx": ctx, "config": {}, "jobs": [j]})
     assert out["candidates"][0].applied_match and out["candidates"][0].job.company == "Acme Talent"
+
+
+def test_llm_provider_switch(monkeypatch):
+    import pytest
+    from jobagent import llm
+    monkeypatch.setenv("MAAS_BASE_URL", "https://maas.test/v1")
+    monkeypatch.setenv("MAAS_API_KEY", "m")
+    monkeypatch.setenv("MAAS_MODEL", "glm-x")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "o")
+    monkeypatch.delenv("OPENROUTER_MODEL", raising=False)
+    monkeypatch.delenv("LLM_PROVIDER", raising=False)
+    assert llm.model() == "glm-x" and str(llm.client().base_url).startswith("https://maas.test")
+    monkeypatch.setenv("LLM_PROVIDER", "OpenRouter")
+    assert llm.model() == llm.OPENROUTER_MODEL and "openrouter.ai" in str(llm.client().base_url)
+    monkeypatch.setenv("OPENROUTER_MODEL", "")
+    assert llm.model() == llm.OPENROUTER_MODEL
+    monkeypatch.setenv("LLM_PROVIDER", "nope")
+    with pytest.raises(ValueError):
+        llm.provider()

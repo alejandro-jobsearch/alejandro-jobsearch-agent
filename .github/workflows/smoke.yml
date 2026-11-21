@@ -12,6 +12,14 @@ on:
       maas_model:
         type: string
         required: true
+      llm_provider:
+        description: maas | openrouter
+        type: string
+        default: maas
+      openrouter_model:
+        description: empty = engine default (a free model)
+        type: string
+        default: ""
 
 jobs:
   smoke:
@@ -31,3 +39,6 @@ jobs:
           MAAS_BASE_URL: ${{ inputs.maas_base_url }}
           MAAS_MODEL: ${{ inputs.maas_model }}
           MAAS_API_KEY: ${{ secrets.MAAS_API_KEY }}
+          LLM_PROVIDER: ${{ inputs.llm_provider }}
+          OPENROUTER_MODEL: ${{ inputs.openrouter_model }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
