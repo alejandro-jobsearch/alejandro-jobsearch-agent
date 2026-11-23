@@ -85,9 +85,14 @@ Return ONLY a JSON object with exactly these keys:
   Skills, tools, certifications, methodologies, domain terms. No soft skills, no job title, no company name."""
 
 
+UNVERIFIED = ("The board labels this remote anywhere, but the company's own posting does not confirm it: "
+              "treat who can apply as not stated unless the description says so.")
+
+
 def _user(j: Job) -> str:
     return json.dumps({"company": j.company, "title": j.title, "location": j.location, "source": j.source,
                        "salary": [j.salary_min, j.salary_max, j.currency] if j.salary_min else None,
+                       **({"location_note": UNVERIFIED} if j.region_unverified else {}),
                        "description": j.description[:12000]}, ensure_ascii=False)
 
 
@@ -109,6 +114,14 @@ def _apply_remote_rule(s: LLMScore) -> LLMScore:
     return s
 
 
+def _apply_board_rule(s: LLMScore, j: Job) -> LLMScore:
+    """A board's "anywhere" label the company did not confirm never counts as open to Peru (2026-11-22: WWR
+    "Anywhere in the World" was US- or Europe-only at the source 3 times out of 3)."""
+    if j.region_unverified and s.remote_eligibility == "peru_ok":
+        s.remote_eligibility = "unclear"
+    return s
+
+
 def score(j: Job, criteria: str) -> LLMScore:
     msgs = [{"role": "system", "content": SYSTEM.format(criteria=criteria, dims=", ".join(DIMENSIONS))},
             {"role": "user", "content": _user(j)}]
@@ -117,7 +130,8 @@ def score(j: Job, criteria: str) -> LLMScore:
         r = client().chat.completions.create(model=model(), messages=msgs, max_tokens=6000,
                                              response_format={"type": "json_object"}, temperature=0.2)
         try:
-            return _apply_remote_rule(LLMScore.model_validate_json(_json_body(r.choices[0].message.content or "")))
+            s = LLMScore.model_validate_json(_json_body(r.choices[0].message.content or ""))
+            return _apply_board_rule(_apply_remote_rule(s), j)
         except ValidationError as e:
             last = e
             log.warning("invalid JSON for %s (attempt %d): %s", j.url, attempt + 1, e.errors()[:2])

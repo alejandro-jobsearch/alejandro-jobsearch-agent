@@ -1,7 +1,8 @@
 """Public remote-job sources (no auth): Himalayas, We Work Remotely, Get on Board, Jobicy.
 
 They publish worldwide, so the first filter is who can apply. Himalayas and Get on Board expose that as data;
-We Work Remotely only as a region label. `Prefilter.eligible_ok` and the LLM's `remote_eligibility` do the rest.
+We Work Remotely only as a region label, and its "Anywhere in the World" is often wrong: those postings are checked
+against the company's own ATS (`origin`). `Prefilter.eligible_ok` and the LLM's `remote_eligibility` do the rest.
 """
 import html
 import logging
@@ -15,6 +16,7 @@ import httpx
 
 from jobagent.models import Job
 from jobagent.sources.boards import TIMEOUT, _text
+from jobagent.sources.origin import ANYWHERE, Resolver
 
 log = logging.getLogger(__name__)
 
@@ -52,18 +54,23 @@ def himalayas(terms: list[str], country: str, utc_offset: float | None, sleep: f
     return out
 
 
-def weworkremotely(url: str = "https://weworkremotely.com/remote-jobs.rss") -> list[Job]:
+def weworkremotely(url: str = "https://weworkremotely.com/remote-jobs.rss", keep=None) -> list[Job]:
+    """An "Anywhere" label is replaced by the location at the company's ATS, or flagged `region_unverified`.
+    `keep(job)` limits those lookups to postings that can pass the prefilter."""
     r = httpx.get(url, headers=HEADERS, timeout=TIMEOUT, follow_redirects=True)
     r.raise_for_status()
-    out = []
+    out, raw = [], {}
     for it in ET.fromstring(r.content).iter("item"):
         company, _, title = (it.findtext("title") or "").partition(":")
+        raw[(it.findtext("link") or "").strip()] = it.findtext("description") or ""
         when = it.findtext("pubDate")
         out.append(Job(source="weworkremotely", company=company.strip(), title=title.strip(),
                        location=(it.findtext("region") or "").strip(), url=(it.findtext("link") or "").strip(),
                        description=_text(it.findtext("description") or ""), remote=True,
                        date_posted=parsedate_to_datetime(when).date() if when else None))
-    return [j for j in out if j.url and j.title]
+    out = [j for j in out if j.url and j.title]
+    origin = Resolver()
+    return [origin.check(j, raw[j.url]) if ANYWHERE.search(j.location) and (keep is None or keep(j)) else j for j in out]
 
 
 def getonboard(terms: list[str], country: str, sleep: float = 1.0) -> list[Job]:
@@ -109,11 +116,12 @@ def jobicy(geo: str = "latam", count: int = 50) -> list[Job]:
     return [j for j in out if j.url and j.title]
 
 
-def search(cfg: dict) -> list[Job]:
-    """Each source fails alone. `cfg`: terms, country, utc_offset, max_age_days, sources."""
+def search(cfg: dict, keep=None) -> list[Job]:
+    """Each source fails alone. `cfg`: terms, country, utc_offset, max_age_days, sources. `keep(job)`: postings
+    worth a lookup at the company's ATS."""
     terms, country = cfg["terms"], cfg.get("country", "Peru")
     calls = {"himalayas": lambda: himalayas(terms, country, cfg.get("utc_offset")),
-             "weworkremotely": weworkremotely,
+             "weworkremotely": lambda: weworkremotely(keep=keep),
              "getonboard": lambda: getonboard(terms, cfg.get("country_pattern", country)),
              "jobicy": lambda: jobicy(cfg.get("jobicy_geo", "latam"))}
     out = []

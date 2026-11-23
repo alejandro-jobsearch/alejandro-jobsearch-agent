@@ -1185,3 +1185,107 @@ def test_llm_provider_switch(monkeypatch):
     monkeypatch.setenv("LLM_PROVIDER", "nope")
     with pytest.raises(ValueError):
         llm.provider()
+
+
+# --- We Work Remotely "Anywhere in the World" checked at the company's ATS (2026-11-22) ---
+
+WWR_FIXTURES = __import__("pathlib").Path(__file__).parent / "fixtures" / "wwr"
+
+
+def _wwr_http(monkeypatch, calls=None):
+    """RSS and Greenhouse boards from fixtures; any other board answers 404."""
+    import re
+
+    import httpx
+
+    def get(url, **kw):
+        if calls is not None:
+            calls.append(url)
+        req = httpx.Request("GET", url)
+        if "weworkremotely.com" in url:
+            return httpx.Response(200, content=(WWR_FIXTURES / "remote-jobs.rss").read_bytes(), request=req)
+        m = re.match(r"https://boards-api\.greenhouse\.io/v1/boards/([\w-]+)/jobs$", url)
+        f = m and WWR_FIXTURES / f"greenhouse_{m[1]}.json"
+        if f and f.exists():
+            return httpx.Response(200, content=f.read_bytes(), request=req)
+        return httpx.Response(404, request=req)
+
+    monkeypatch.setattr(httpx, "get", get)
+
+
+def test_wwr_anywhere_takes_the_location_from_the_company_ats(monkeypatch):
+    from jobagent.sources import remote
+
+    _wwr_http(monkeypatch)
+    got = {j.company: j for j in remote.weworkremotely() if j.title != "Chief of Staff"}
+    ld, gl, sb = got["LaunchDarkly"], got["Grafana Labs"], got["Storyblok"]
+    # region-locked at the source: the real location reaches the prefilter and the LLM, and counts as checked
+    assert ld.location == "Remote - US" and not ld.region_unverified
+    assert ld.apply_url == "https://job-boards.greenhouse.io/launchdarkly/jobs/8109676003"
+    assert gl.location.startswith("USA") and not gl.region_unverified      # found as grafanalabs, by title
+    # Storyblok: found by the gh_jid link on its own domain, but Greenhouse only says "Remote" (its careers page
+    # says Europe): not confirmed open, so it stays unverified
+    assert sb.location == "Remote" and sb.region_unverified
+    assert sb.apply_url == "https://www.storyblok.com/job?gh_jid=5028595101"
+
+
+def test_wwr_anywhere_without_a_company_posting_is_unverified(monkeypatch):
+    from jobagent.sources import remote
+
+    _wwr_http(monkeypatch)
+    got = {j.title: j for j in remote.weworkremotely()}
+    assert got["Head of AI"].location == "Anywhere in the World" and got["Head of AI"].region_unverified
+    usa = got["Chief of Staff"]       # region given by WWR itself: no lookup, the prefilter decides
+    assert usa.location == "USA Only" and not usa.region_unverified and usa.apply_url is None
+
+
+def test_wwr_lookups_only_for_kept_postings(monkeypatch):
+    from jobagent.sources import remote
+
+    calls = []
+    _wwr_http(monkeypatch, calls)
+    got = remote.weworkremotely(keep=lambda j: j.company == "Grafana Labs")
+    assert [u for u in calls if "weworkremotely" not in u] == [
+        "https://boards-api.greenhouse.io/v1/boards/grafanalabs/jobs"]
+    assert not next(j for j in got if j.company == "Grafana Labs").region_unverified
+    assert next(j for j in got if j.title.startswith("Director, Internal")).location == "Anywhere in the World"
+
+
+def test_origin_slugs_and_region():
+    from jobagent.sources import origin
+
+    assert origin.slugs("Grafana Labs") == ["grafanalabs", "grafana-labs", "grafana"]
+    assert origin.slugs("Acme, Inc.") == ["acme"]
+    assert not origin.confirms_region("Remote") and not origin.confirms_region(" 100% Remote ")
+    assert origin.confirms_region("Remote - US") and origin.confirms_region("Anywhere")
+    assert origin.confirms_region("Remote · LATAM")
+
+
+def test_origin_does_not_guess_between_regional_variants():
+    from jobagent.sources.origin import _match
+
+    posted = [Job(source="greenhouse", company="c", title=f"Account Executive - {r}", url=f"https://x/jobs/{i}")
+              for i, r in enumerate(["USA", "UK"])]
+    assert _match("Account Executive", posted, None) is None
+    assert _match("Account Executive", posted, "1").title.endswith("UK")
+
+
+def test_unverified_anywhere_is_never_open_to_peru():
+    j = Job(source="weworkremotely", company="c", title="t", url="u", location="Anywhere in the World",
+            region_unverified=True)
+    assert scoring._apply_board_rule(_score(remote_eligibility="peru_ok"), j).remote_eligibility == "unclear"
+    assert scoring._apply_board_rule(_score(remote_eligibility="latam"), j).remote_eligibility == "latam"
+    checked = j.model_copy(update={"region_unverified": False})
+    assert scoring._apply_board_rule(_score(remote_eligibility="peru_ok"), checked).remote_eligibility == "peru_ok"
+    assert "location_note" in scoring._user(j) and "location_note" not in scoring._user(checked)
+
+
+def test_origin_follows_an_ats_link_in_the_listing_html(monkeypatch):
+    from jobagent.sources.origin import Resolver
+
+    _wwr_http(monkeypatch)
+    j = Job(source="weworkremotely", company="LD", title="AI Ops Director", url="u", location="Anywhere in the World")
+    raw = '&lt;a href="https://job-boards.greenhouse.io/launchdarkly/jobs/8109676003"&gt;Apply&lt;/a&gt;'
+    got = Resolver().check(j, raw)          # neither the name nor the title would find it: the link and id do
+    assert got.location == "Remote - US" and not got.region_unverified
+    assert Resolver().check(j).region_unverified

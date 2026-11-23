@@ -112,7 +112,9 @@ def source_remote(state: State) -> dict:
     cfg = state["config"].get("remote_boards")
     if not cfg or "remote" in state["options"].get("skip", []):
         return {"raw": []}
-    return {"raw": remote.search(cfg)}
+    # ATS lookups only for what can pass the title prefilter and is new
+    title_ok, ctx = Prefilter(state["config"]["prefilter"]).title_ok, state.get("ctx")
+    return {"raw": remote.search(cfg, keep=lambda j: title_ok(j) and not (ctx and ctx.is_seen(j)))}
 
 
 def source_exa(state: State) -> dict:
