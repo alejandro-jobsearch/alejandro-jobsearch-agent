@@ -27,6 +27,7 @@ class Job(BaseModel):
     job_type: str | None = None          # fulltime | parttime | contract | temporary | internship (JobSpy)
     company_url: str | None = None       # LinkedIn company page, used by the company filter
     apply_url: str | None = None         # company apply page behind a board listing (JobSpy job_url_direct)
+    region_unverified: bool = False      # board says "anywhere", the company's own posting did not confirm it
 
     @property
     def key(self) -> str:

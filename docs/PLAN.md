@@ -170,3 +170,9 @@ No se ejecuta su código. Solo se usa como referencia de diseño.
 **2026-11-09 — Autodescubrimiento de boards y Jobicy**
 - `remember` agrega a `state/boards.json` el board de Greenhouse, Lever, Ashby o Workday detrás de cada vacante con score ≥ `tracker.watch_min` (URL del aviso o `apply_url`, que JobSpy trae como `job_url_direct`). `source_boards` lee esos boards junto a los de la config (`all_boards`). `discovery.enabled: false` lo apaga; Workday descubierto se filtra por `discovery.workday_country`.
 - Nueva fuente remota `jobicy` (API pública, `geo=latam`). Su búsqueda por etiqueta no filtra (devuelve lo mismo con cualquier tag), así que se leen los 50 más recientes y decide el prefiltro.
+
+**2026-11-22 — We Work Remotely: "Anywhere in the World" se verifica en el ATS de la empresa**
+- La etiqueta "Anywhere in the World" de WWR no es confiable: las 3 revisadas a mano (LaunchDarkly, Grafana Labs, Storyblok) y 8 de 8 en una prueba con el feed real eran solo EE.UU. o Europa en el aviso original.
+- Nuevo `sources/origin.py`: busca el aviso en Greenhouse, Lever o Ashby (link del RSS, o board con el nombre de la empresa y el mismo título; si hay varias variantes regionales no adivina) y usa esa ubicación y `apply_url`. Las páginas de WWR tienen desafío de Cloudflare y no se visitan.
+- Si no se encuentra, o el ATS solo dice "Remote", el aviso queda con `Job.region_unverified`: el LLM recibe una nota y `scoring._apply_board_rule` baja `peru_ok` a `unclear` (sin pesos de carril).
+- Las búsquedas en ATS solo se hacen para avisos que pasan el filtro de título y son nuevos (`keep`, como JobSpy).

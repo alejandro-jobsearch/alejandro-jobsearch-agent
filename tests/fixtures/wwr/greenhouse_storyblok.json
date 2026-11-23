@@ -1,0 +1,27 @@
+{
+ "jobs": [
+  {
+   "id": 5028595101,
+   "title": "Senior Product Architect",
+   "location": {
+    "name": "Remote"
+   },
+   "absolute_url": "https://www.storyblok.com/job?gh_jid=5028595101",
+   "updated_at": "2026-11-10T11:59:47-05:00",
+   "content": "&lt;p&gt;Shape the product architecture.&lt;/p&gt;"
+  },
+  {
+   "id": 4988382101,
+   "title": "Developer Relations Engineer - USA ",
+   "location": {
+    "name": "Remote"
+   },
+   "absolute_url": "https://www.storyblok.com/job?gh_jid=4988382101",
+   "updated_at": "2026-11-10T11:59:47-05:00",
+   "content": "&lt;p&gt;Devrel.&lt;/p&gt;"
+  }
+ ],
+ "meta": {
+  "total": 2
+ }
+}
